@@ -2,10 +2,9 @@
 
 # Definindo o diretório base do projeto
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Importando bibliotecas compartilhadas
-source "$PROJECT_ROOT/lib/common.sh"
+source "/usr/local/lib/opsmaster/common.sh"
 
 # Versão do OPSMaster
 VERSION="0.1.0"
@@ -43,7 +42,7 @@ main() {
                 echo "Erro: Especifique qual script deseja executar"
                 exit 1
             fi
-            script_path="$PROJECT_ROOT/scripts/$category/$script.sh"
+            script_path="$SCRIPT_DIR/scripts/$category/$script.sh"
             if [ -f "$script_path" ]; then
                 shift
                 bash "$script_path" "$@"
