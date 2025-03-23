@@ -70,11 +70,9 @@ sudo ./uninstall.sh
 opsmaster [comando] [subcomando] [flags]
 
 Exemplos de comandos:
-- `opsmaster aws`: Gerencia recursos AWS
 - `opsmaster k8s`: Operações relacionadas ao Kubernetes
 - `opsmaster infra`: Gerenciamento de infraestrutura
-- `opsmaster monitor`: Monitoramento de recursos
-- `opsmaster backup`: Realiza operações de backup e restauração
+- `opsmaster backup`: Realiza operações de backups
 
 Para ver todos os comandos disponíveis, execute:
 opsmaster --help

@@ -9,16 +9,55 @@ source "/usr/local/lib/opsmaster/common.sh"
 # Versão do OPSMaster
 VERSION="0.1.0"
 
+# Função para listar scripts de uma categoria
+list_category_scripts() {
+    local category="$1"
+    local scripts_dir="/etc/opsmaster/scripts/$category"
+    
+    echo "Utilitários disponíveis em '$category':"
+    echo "----------------------------------------"
+    
+    if [ -d "$scripts_dir" ]; then
+        for script in "$scripts_dir"/*.sh; do
+            if [ -f "$script" ]; then
+                local name=$(basename "$script" .sh)
+                local description=""
+                
+                # Tentar extrair a primeira linha de help do script
+                if grep -q "^# Description:" "$script"; then
+                    description=$(grep "^# Description:" "$script" | cut -d: -f2- | sed 's/^[[:space:]]*//')
+                fi
+                
+                printf "  %-20s %s\n" "$name" "${description:-Sem descrição disponível}"
+            fi
+        done
+    else
+        echo "Nenhum utilitário encontrado."
+    fi
+    echo
+    echo "Para mais informações sobre um utilitário específico:"
+    echo "  opsmaster $category <utilitário> --help"
+    echo
+}
+
 # Função de ajuda
 show_help() {
     echo "Uso: opsmaster <comando> [argumentos]"
     echo ""
     echo "Comandos disponíveis:"
+    echo "  k8s          Comandos relacionados ao Kubernetes"
     echo "  infra        Comandos relacionados a infraestrutura"
     echo "  monitoring   Comandos de monitoramento"
     echo "  backup       Comandos de backup"
     echo "  network      Comandos de rede"
     echo "  help         Mostra esta mensagem de ajuda"
+    echo ""
+    echo "Para listar utilitários de uma categoria:"
+    echo "  opsmaster <categoria> list"
+    echo ""
+    echo "Exemplos:"
+    echo "  opsmaster k8s list       # Lista todos os utilitários Kubernetes"
+    echo "  opsmaster backup list    # Lista todos os utilitários de backup"
     echo ""
 }
 
@@ -34,20 +73,26 @@ main() {
         --version|-v)
             show_version
             ;;
-        infra|monitoring|backup|network)
+        k8s|infra|monitoring|backup|network)
             category="$1"
             shift
-            script="$1"
-            if [ -z "$script" ]; then
-                echo "Erro: Especifique qual script deseja executar"
-                exit 1
+            
+            # Se não houver mais argumentos ou o argumento for 'list', mostrar utilitários disponíveis
+            if [ -z "$1" ] || [ "$1" = "list" ]; then
+                list_category_scripts "$category"
+                exit 0
             fi
-            script_path="$SCRIPT_DIR/scripts/$category/$script.sh"
+            
+            script="$1"
+            script_path="/etc/opsmaster/scripts/$category/$script.sh"
+            
             if [ -f "$script_path" ]; then
                 shift
                 bash "$script_path" "$@"
             else
-                echo "Erro: Script '$script' não encontrado em $category"
+                log_error "Script '$script' não encontrado em $category"
+                echo
+                list_category_scripts "$category"
                 exit 1
             fi
             ;;
@@ -55,7 +100,7 @@ main() {
             show_help
             ;;
         *)
-            echo "Erro: Comando desconhecido '$1'"
+            log_error "Comando desconhecido '$1'"
             show_help
             exit 1
             ;;

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
+# Description: Realiza backup de arquivos para Amazon S3
 
-source "$(dirname "$(dirname "$(dirname "$0")")")/lib/common.sh"
+source "/usr/local/lib/opsmaster/common.sh"
 
 check_dependency "aws"
 

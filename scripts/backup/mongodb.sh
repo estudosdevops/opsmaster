@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Description: Gerencia backup e restore de bancos MongoDB
 
 source "$(dirname "$(dirname "$(dirname "$0")")")/lib/common.sh"
 

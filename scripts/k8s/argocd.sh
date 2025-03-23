@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
+# Description: Gerencia aplicações e projetos no ArgoCD
 
-source "$(dirname "$(dirname "$(dirname "$0")")")/lib/common.sh"
+source "/usr/local/lib/opsmaster/common.sh"
 
 # Verificar dependências necessárias
 check_dependency "argocd" "kubectl" "python3"
