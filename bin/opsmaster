@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+# Definindo o diretório base do projeto
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Importando bibliotecas compartilhadas
+source "$PROJECT_ROOT/lib/common.sh"
+
+# Versão do OPSMaster
+VERSION="0.1.0"
+
+# Função de ajuda
+show_help() {
+    echo "Uso: opsmaster <comando> [argumentos]"
+    echo ""
+    echo "Comandos disponíveis:"
+    echo "  infra        Comandos relacionados a infraestrutura"
+    echo "  monitoring   Comandos de monitoramento"
+    echo "  backup       Comandos de backup"
+    echo "  network      Comandos de rede"
+    echo "  help         Mostra esta mensagem de ajuda"
+    echo ""
+}
+
+# Função para mostrar a versão
+show_version() {
+    echo "OPSMaster CLI v${VERSION}"
+    exit 0
+}
+
+# Função principal
+main() {
+    case "$1" in
+        --version|-v)
+            show_version
+            ;;
+        infra|monitoring|backup|network)
+            category="$1"
+            shift
+            script="$1"
+            if [ -z "$script" ]; then
+                echo "Erro: Especifique qual script deseja executar"
+                exit 1
+            fi
+            script_path="$PROJECT_ROOT/scripts/$category/$script.sh"
+            if [ -f "$script_path" ]; then
+                shift
+                bash "$script_path" "$@"
+            else
+                echo "Erro: Script '$script' não encontrado em $category"
+                exit 1
+            fi
+            ;;
+        help|--help|-h)
+            show_help
+            ;;
+        *)
+            echo "Erro: Comando desconhecido '$1'"
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+main "$@" 

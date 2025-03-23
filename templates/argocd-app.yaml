@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ name }}
+  namespace: argocd
+  {% if labels %}
+  labels:
+    {% for key, value in labels.items() %}
+    {{ key }}: {{ value }}
+    {% endfor %}
+  {% endif %}
+spec:
+  project: {{ project }}
+  source:
+    repoURL: {{ repo }}
+    targetRevision: {{ branch | default('HEAD') }}
+    path: {{ path }}
+    {% if helm_values %}
+    helm:
+      valueFiles:
+        {% for value in helm_values %}
+        - {{ value }}
+        {% endfor %}
+    {% endif %}
+  destination:
+    server: {{ cluster | default('https://kubernetes.default.svc') }}
+    namespace: {{ namespace }}
+  syncPolicy:
+    automated:
+      prune: {{ prune | default(true) | lower }}
+      selfHeal: {{ self_heal | default(true) | lower }}
+    {% if sync_options %}
+    syncOptions:
+      {% for option in sync_options %}
+      - {{ option }}
+      {% endfor %}
+    {% endif %} 

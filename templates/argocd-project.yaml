@@ -1,0 +1,99 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ name }}
+  namespace: argocd
+  {% if labels %}
+  labels:
+    {% for key, value in labels.items() %}
+    {{ key }}: {{ value }}
+    {% endfor %}
+  {% endif %}
+spec:
+  description: {{ description }}
+  
+  # Repositórios fonte permitidos
+  sourceRepos:
+  {% for repo in source_repos %}
+  - {{ repo }}
+  {% endfor %}
+  
+  # Clusters e namespaces de destino permitidos
+  destinations:
+  {% for ns in destination_namespaces %}
+  - namespace: {{ ns }}
+    server: {{ destination_server | default('https://kubernetes.default.svc') }}
+  {% endfor %}
+  
+  # Recursos do Kubernetes permitidos
+  {% if cluster_resource_whitelist %}
+  clusterResourceWhitelist:
+  {% for resource in cluster_resource_whitelist %}
+  - group: {{ resource.group }}
+    kind: {{ resource.kind }}
+  {% endfor %}
+  {% else %}
+  clusterResourceWhitelist:
+  - group: '*'
+    kind: '*'
+  {% endif %}
+  
+  # Recursos de namespace permitidos
+  {% if namespace_resource_whitelist %}
+  namespaceResourceWhitelist:
+  {% for resource in namespace_resource_whitelist %}
+  - group: {{ resource.group }}
+    kind: {{ resource.kind }}
+  {% endfor %}
+  {% else %}
+  namespaceResourceWhitelist:
+  - group: '*'
+    kind: '*'
+  {% endif %}
+  
+  # Funções do projeto
+  roles:
+  {% if roles %}
+  {% for role in roles %}
+  - name: {{ role.name }}
+    description: {{ role.description }}
+    policies:
+    {% for policy in role.policies %}
+    - {{ policy }}
+    {% endfor %}
+  {% endfor %}
+  {% else %}
+  # Role padrão para desenvolvedores
+  - name: developer
+    description: Desenvolvedor com acesso para sync e visualização
+    policies:
+    - p, proj:{{ name }}:developer, applications, get, {{ name }}/*, allow
+    - p, proj:{{ name }}:developer, applications, sync, {{ name }}/*, allow
+  
+  # Role padrão para administradores
+  - name: admin
+    description: Administrador com acesso total
+    policies:
+    - p, proj:{{ name }}:admin, applications, *, {{ name }}/*, allow
+  {% endif %}
+  
+  # Configurações de sincronização
+  {% if sync_windows %}
+  syncWindows:
+  {% for window in sync_windows %}
+  - kind: {{ window.kind }}
+    schedule: {{ window.schedule }}
+    duration: {{ window.duration }}
+    {% if window.applications %}
+    applications:
+    {% for app in window.applications %}
+    - {{ app }}
+    {% endfor %}
+    {% endif %}
+  {% endfor %}
+  {% else %}
+  syncWindows:
+  - kind: allow
+    schedule: '* * * * *'
+    duration: 24h
+  {% endif %} 
