@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Description: Gerencia backup e restore de bancos MongoDB
 
-source "$(dirname "$(dirname "$(dirname "$0")")")/lib/common.sh"
+# shellcheck disable=SC1091
+source "/usr/local/lib/opsmaster/common.sh"
 
 # Configurações padrão
 BACKUP_DIR="${BACKUP_DIR:-/tmp/mongodb_backups}"
