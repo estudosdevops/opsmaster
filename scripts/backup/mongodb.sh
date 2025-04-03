@@ -171,11 +171,40 @@ check_database_exists() {
     fi
 }
 
+# Nova função para testar conexão com MongoDB
+test_mongodb_connection() {
+    local uri="$1"
+    local host port username password auth_db
+    parse_mongodb_uri "$uri" host port username password auth_db
+    
+    log_info "Testando conexão com MongoDB em $host:$port..."
+    
+    # Comando para testar a conexão
+    local test_cmd="db.runCommand({ping: 1})"
+    
+    if ! execute_mongo_command "$host" "$port" "$username" "$password" "$test_cmd" >/dev/null 2>&1; then
+        log_error "Não foi possível conectar ao MongoDB"
+        log_error "Verifique:"
+        log_error "- Se o servidor está acessível"
+        log_error "- Se as credenciais estão corretas"
+        log_error "- Se o usuário tem as permissões necessárias"
+        return 1
+    fi
+    
+    log_info "Conexão estabelecida com sucesso"
+    return 0
+}
+
 # Função para realizar dump
 do_dump() {
     local uri="$1"
     local specific_db="$2"
-    local custom_dir="$3"  # Novo parâmetro para diretório personalizado
+    local custom_dir="$3"
+    
+    # Testar conexão antes de prosseguir
+    if ! test_mongodb_connection "$uri"; then
+        exit 1
+    fi
     
     # Extrair credenciais da URI
     local host port username password auth_db
@@ -253,6 +282,11 @@ do_restore() {
     
     # Verificar dependências antes de prosseguir
     check_mongodb_deps
+    
+    # Testar conexão antes de prosseguir
+    if ! test_mongodb_connection "$uri"; then
+        exit 1
+    fi
     
     # Extrair credenciais da URI
     local host port username password auth_db
