@@ -204,7 +204,7 @@ except Exception as e:
 "
     
     if [ $? -eq 0 ]; then
-        log_info "✅ Template processado com sucesso: $output"
+        log_info "Template processado com sucesso: $output"
     else
         log_error "Falha ao processar template"
         exit 1
@@ -240,7 +240,7 @@ apply_manifest() {
     
     # Aplicar manifesto usando o comando apropriado
     if argocd "$action" create -f "$manifest" >/dev/null 2>&1; then
-        log_info "✅ $action '$name' criado com sucesso"
+        log_info "$action '$name' criado com sucesso"
     else
         log_error "Falha ao criar $action '$name'"
         exit 1
@@ -398,7 +398,7 @@ do_login() {
     # Exportar token para uso imediato
     export ARGOCD_AUTH_TOKEN="$token"
     
-    log_info "✅ Autenticação configurada com sucesso"
+    log_info "Autenticação configurada com sucesso"
     argocd account get-user-info
 }
 
@@ -495,4 +495,4 @@ main() {
     esac
 }
 
-main "$@" 
+main "$@"

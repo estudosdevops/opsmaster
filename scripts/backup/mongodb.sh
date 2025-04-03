@@ -230,9 +230,9 @@ do_dump() {
         
         log_info "Executando: $cmd"
         if eval "$cmd"; then
-            log_info "✅ Dump do banco $db concluído com sucesso"
+            log_info "Dump do banco $db concluído com sucesso"
         else
-            log_error "❌ Falha no dump do banco $db"
+            log_error "Falha no dump do banco $db"
             exit 1
         fi
     done
@@ -291,9 +291,9 @@ do_restore() {
         
         log_info "Restaurando banco específico: $specific_db"
         if eval "$cmd_base --db=$specific_db $db_path"; then
-            log_info "✅ Restore do banco $specific_db concluído com sucesso"
+            log_info "Restore do banco $specific_db concluído com sucesso"
         else
-            log_error "❌ Falha no restore do banco $specific_db"
+            log_error "Falha no restore do banco $specific_db"
             exit 1
         fi
     else
@@ -313,9 +313,9 @@ do_restore() {
                 
                 log_info "Restaurando banco: $db_name"
                 if eval "$cmd_base --db=$db_name $db_path"; then
-                    log_info "✅ Restore do banco $db_name concluído com sucesso"
+                    log_info "Restore do banco $db_name concluído com sucesso"
                 else
-                    log_error "❌ Falha no restore do banco $db_name"
+                    log_error "Falha no restore do banco $db_name"
                     exit 1
                 fi
             fi
@@ -401,9 +401,9 @@ EOF
     if command -v mongosh >/dev/null 2>&1 && \
        command -v mongodump >/dev/null 2>&1 && \
        command -v mongorestore >/dev/null 2>&1; then
-        log_info "✅ Todas as dependências foram instaladas com sucesso!"
+        log_info "Todas as dependências foram instaladas com sucesso!"
     else
-        log_error "❌ Falha na instalação das dependências"
+        log_error "Falha na instalação das dependências"
         log_error "Por favor, verifique os erros acima e tente novamente"
         exit 1
     fi
