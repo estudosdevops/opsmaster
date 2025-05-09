@@ -11,6 +11,13 @@ DATE_FORMAT=$(date +%Y%m%d_%H%M%S)
 # Função para verificar dependências necessárias
 check_mongodb_deps() {
     check_dependency "mongodump" "mongorestore" "mongosh"
+    
+    # Verificar se o dnspython está instalado (necessário para mongodb+srv)
+    if ! python3 -c "import dns" &>/dev/null; then
+        log_error "dnspython não está instalado. Este pacote é necessário para conexões mongodb+srv"
+        log_info "Execute 'opsmaster backup mongodb install-deps' para instalar"
+        exit 1
+    fi
 }
 
 # Função para obter lista de bancos excluindo os do sistema
@@ -70,11 +77,12 @@ parse_mongodb_uri() {
     local -n ref_auth_db=$6
     
     # Padrão para parsing da URI mongodb://[username:password@]host[:port][/database][?options]
-    if [[ "$uri" =~ mongodb://([^:@]+):([^@]+)@([^:/]+):?([0-9]*)/?(.*) ]]; then
-        ref_username="${BASH_REMATCH[1]}"
-        ref_password="${BASH_REMATCH[2]}"
-        ref_host="${BASH_REMATCH[3]}"
-        ref_port="${BASH_REMATCH[4]:-27017}"
+    # ou mongodb+srv://[username:password@]host[/database][?options]
+    if [[ "$uri" =~ mongodb(\+srv)?://([^:@]+):([^@]+)@([^:/]+)(:([0-9]+))?/?(.*) ]]; then
+        ref_username="${BASH_REMATCH[2]}"
+        ref_password="${BASH_REMATCH[3]}"
+        ref_host="${BASH_REMATCH[4]}"
+        ref_port="${BASH_REMATCH[6]:-27017}"
         ref_auth_db="admin"
     else
         ref_host="localhost"
@@ -119,7 +127,7 @@ show_backup_sizes() {
     echo
 }
 
-# Nova função para executar comandos MongoDB
+# Função para executar comandos MongoDB
 execute_mongo_command() {
     local host="$1"
     local port="$2"
@@ -127,17 +135,70 @@ execute_mongo_command() {
     local password="$4"
     local command="$5"
     
-    if [ -n "$username" ] && [ -n "$password" ]; then
-        mongosh --host "$host" --port "$port" \
-                --username "$username" --password "$password" \
-                --quiet --eval "$command"
+    # Se a URI contém mongodb+srv, não usamos host e port separadamente
+    if [[ "$host" == *".mongodb.net" ]]; then
+        if [ -n "$username" ] && [ -n "$password" ]; then
+            mongosh "mongodb+srv://$username:$password@$host" \
+                    --quiet --eval "$command"
+        else
+            mongosh "mongodb+srv://$host" \
+                    --quiet --eval "$command"
+        fi
     else
-        mongosh --host "$host" --port "$port" \
-                --quiet --eval "$command"
+        if [ -n "$username" ] && [ -n "$password" ]; then
+            mongosh --host "$host" --port "$port" \
+                    --username "$username" --password "$password" \
+                    --quiet --eval "$command"
+        else
+            mongosh --host "$host" --port "$port" \
+                    --quiet --eval "$command"
+        fi
     fi
 }
 
-# Nova função para construir comando base MongoDB
+# Função para testar conexão com MongoDB
+test_mongodb_connection() {
+    local uri="$1"
+    local host port username password auth_db
+    parse_mongodb_uri "$uri" host port username password auth_db
+    
+    # Se a URI contém mongodb+srv, mostramos mensagem sem porta
+    if [[ "$uri" == *"mongodb+srv://"* ]]; then
+        log_info "Testando conexão com MongoDB Atlas em $host..."
+    else
+        log_info "Testando conexão com MongoDB em $host:$port..."
+    fi
+    
+    # Comando para testar a conexão
+    local test_cmd="db.runCommand({ping: 1})"
+    
+    # Se a URI contém mongodb+srv, usamos a URI completa
+    if [[ "$uri" == *"mongodb+srv://"* ]]; then
+        if ! mongosh "$uri" --quiet --eval "$test_cmd" >/dev/null 2>&1; then
+            log_error "Não foi possível conectar ao MongoDB Atlas"
+            log_error "Verifique:"
+            log_error "- Se o servidor está acessível"
+            log_error "- Se as credenciais estão corretas"
+            log_error "- Se o usuário tem as permissões necessárias"
+            log_error "- Se o IP do seu servidor está liberado no MongoDB Atlas"
+            return 1
+        fi
+    else
+        if ! execute_mongo_command "$host" "$port" "$username" "$password" "$test_cmd" >/dev/null 2>&1; then
+            log_error "Não foi possível conectar ao MongoDB"
+            log_error "Verifique:"
+            log_error "- Se o servidor está acessível"
+            log_error "- Se as credenciais estão corretas"
+            log_error "- Se o usuário tem as permissões necessárias"
+            return 1
+        fi
+    fi
+    
+    log_info "Conexão estabelecida com sucesso"
+    return 0
+}
+
+# Função para construir comando base MongoDB
 build_mongo_command() {
     local cmd="$1"
     local host="$2"
@@ -146,16 +207,25 @@ build_mongo_command() {
     local password="$5"
     local auth_db="$6"
     
-    local base_cmd="$cmd --host $host --port $port"
-    
-    if [ -n "$username" ] && [ -n "$password" ]; then
-        base_cmd="$base_cmd --username $username --password $password --authenticationDatabase $auth_db"
+    # Se a URI contém mongodb+srv, construímos a URI completa
+    if [[ "$host" == *".mongodb.net" ]]; then
+        if [ -n "$username" ] && [ -n "$password" ]; then
+            echo "$cmd --uri mongodb+srv://$username:$password@$host"
+        else
+            echo "$cmd --uri mongodb+srv://$host"
+        fi
+    else
+        local base_cmd="$cmd --host $host --port $port"
+        
+        if [ -n "$username" ] && [ -n "$password" ]; then
+            base_cmd="$base_cmd --username $username --password $password --authenticationDatabase $auth_db"
+        fi
+        
+        echo "$base_cmd"
     fi
-    
-    echo "$base_cmd"
 }
 
-# Nova função para verificar existência do banco
+# Função para verificar existência do banco
 check_database_exists() {
     local host="$1"
     local port="$2"
@@ -169,30 +239,6 @@ check_database_exists() {
         log_error "Banco de dados '$db_name' não encontrado"
         exit 1
     fi
-}
-
-# Nova função para testar conexão com MongoDB
-test_mongodb_connection() {
-    local uri="$1"
-    local host port username password auth_db
-    parse_mongodb_uri "$uri" host port username password auth_db
-    
-    log_info "Testando conexão com MongoDB em $host:$port..."
-    
-    # Comando para testar a conexão
-    local test_cmd="db.runCommand({ping: 1})"
-    
-    if ! execute_mongo_command "$host" "$port" "$username" "$password" "$test_cmd" >/dev/null 2>&1; then
-        log_error "Não foi possível conectar ao MongoDB"
-        log_error "Verifique:"
-        log_error "- Se o servidor está acessível"
-        log_error "- Se as credenciais estão corretas"
-        log_error "- Se o usuário tem as permissões necessárias"
-        return 1
-    fi
-    
-    log_info "Conexão estabelecida com sucesso"
-    return 0
 }
 
 # Função para realizar dump
@@ -224,7 +270,7 @@ do_dump() {
     
     log_info "Diretório de destino: $output_dir"
     
-    # Construir comando base usando a nova função
+    # Construir comando base usando função
     local cmd_base
     cmd_base=$(build_mongo_command "mongodump" "$host" "$port" "$username" "$password" "$auth_db")
     
@@ -306,7 +352,7 @@ do_restore() {
         exit 1
     fi
     
-    # Construir comando base usando a nova função
+    # Construir comando base usando função
     local cmd_base
     cmd_base=$(build_mongo_command "mongorestore" "$host" "$port" "$username" "$password" "$auth_db")
     
@@ -388,7 +434,7 @@ install_deps() {
             
             # Instalar pré-requisitos
             sudo apt-get update
-            sudo apt-get install -y wget gnupg
+            sudo apt-get install -y wget gnupg python3-pip
 
             # Adicionar chave GPG do MongoDB
             wget -qO - https://www.mongodb.org/static/pgp/server-6.0.asc | sudo apt-key add -
@@ -401,6 +447,7 @@ install_deps() {
             log_info "Instalando ferramentas MongoDB..."
             sudo apt-get update
             sudo apt-get install -y mongodb-mongosh mongodb-database-tools
+            sudo pip3 install dnspython
             ;;
             
         rhel|centos|amzn)
@@ -419,7 +466,8 @@ EOF
             
             # Instalar
             log_info "Instalando ferramentas MongoDB..."
-            sudo yum install -y mongodb-mongosh mongodb-database-tools
+            sudo yum install -y mongodb-mongosh mongodb-database-tools python3-pip
+            sudo pip3 install dnspython
             ;;
             
         *)
@@ -427,6 +475,7 @@ EOF
             log_info "Por favor, instale manualmente:"
             log_info "- mongosh (MongoDB Shell)"
             log_info "- mongodb-database-tools (para mongodump e mongorestore)"
+            log_info "- dnspython (para suporte a mongodb+srv)"
             exit 1
             ;;
     esac
@@ -434,7 +483,8 @@ EOF
     # Verificar se a instalação foi bem sucedida
     if command -v mongosh >/dev/null 2>&1 && \
        command -v mongodump >/dev/null 2>&1 && \
-       command -v mongorestore >/dev/null 2>&1; then
+       command -v mongorestore >/dev/null 2>&1 && \
+       python3 -c "import dns" &>/dev/null; then
         log_info "Todas as dependências foram instaladas com sucesso!"
     else
         log_error "Falha na instalação das dependências"
@@ -464,18 +514,31 @@ show_help() {
     echo "Variáveis de ambiente:"
     echo "  BACKUP_DIR                     Diretório para armazenar backups (padrão: /tmp/mongodb_backups)"
     echo
-    echo "Exemplos:"
-    echo "  1. Dump de todos os bancos no diretório padrão:"
+    echo "Exemplos para MongoDB Atlas:"
+    echo "  1. Dump de todos os bancos:"
+    echo "     opsmaster backup mongodb dump 'mongodb+srv://usuario:senha@seu-cluster.mongodb.net'"
+    echo
+    echo "  2. Dump de um banco específico:"
+    echo "     opsmaster backup mongodb dump 'mongodb+srv://usuario:senha@seu-cluster.mongodb.net' meudb"
+    echo
+    echo "  3. Restore de todos os bancos:"
+    echo "     opsmaster backup mongodb restore 'mongodb+srv://usuario:senha@seu-cluster.mongodb.net' all_20240225_150226"
+    echo
+    echo "  4. Restore de um banco específico:"
+    echo "     opsmaster backup mongodb restore 'mongodb+srv://usuario:senha@seu-cluster.mongodb.net' all_20240225_150226 meudb"
+    echo
+    echo "Exemplos para MongoDB Local/Remoto:"
+    echo "  1. Dump de todos os bancos (localhost):"
     echo "     opsmaster backup mongodb dump 'mongodb://root:senha@localhost:27017'"
     echo
-    echo "  2. Dump de um banco específico em diretório personalizado:"
-    echo "     opsmaster backup mongodb dump 'mongodb://root:senha@localhost:27017' meudb /path/to/backup"
+    echo "  2. Dump de um banco específico (servidor remoto):"
+    echo "     opsmaster backup mongodb dump 'mongodb://usuario:senha@servidor:27017' meudb"
     echo
     echo "  3. Restore de todos os bancos:"
     echo "     opsmaster backup mongodb restore 'mongodb://root:senha@localhost:27017' all_20240225_150226"
     echo
     echo "  4. Restore de um banco específico:"
-    echo "     opsmaster backup mongodb restore 'mongodb://root:senha@localhost:27017' all_20240225_150226 meudb"
+    echo "     opsmaster backup mongodb restore 'mongodb://usuario:senha@servidor:27017' all_20240225_150226 meudb"
     echo
     echo "  5. Listar backups disponíveis:"
     echo "     opsmaster backup mongodb list"
@@ -484,14 +547,21 @@ show_help() {
     echo "     opsmaster backup mongodb install-deps"
     echo
     echo "Formatos de URI suportados:"
-    echo "  - mongodb://localhost:27017                     (sem autenticação)"
-    echo "  - mongodb://usuario:senha@localhost:27017       (com autenticação básica)"
-    echo "  - mongodb://usuario:senha@localhost:27017/admin (com banco específico)"
+    echo "  MongoDB Atlas:"
+    echo "    - mongodb+srv://usuario:senha@seu-cluster.mongodb.net"
+    echo "    - mongodb+srv://usuario:senha@seu-cluster.mongodb.net/admin"
+    echo
+    echo "  MongoDB Local/Remoto:"
+    echo "    - mongodb://localhost:27017                     (sem autenticação)"
+    echo "    - mongodb://usuario:senha@localhost:27017       (com autenticação básica)"
+    echo "    - mongodb://usuario:senha@servidor:27017/admin  (com banco específico)"
     echo
     echo "Notas:"
     echo "  - Os backups são salvos em diretórios com o formato: <banco>_<data>_<hora>"
     echo "  - Para backups completos, usa-se o prefixo 'all' no nome do diretório"
     echo "  - O comando list mostra o nome e tamanho de cada backup disponível"
+    echo "  - Para MongoDB Atlas, é necessário ter o IP do servidor liberado no firewall"
+    echo "  - Para MongoDB Atlas, o pacote dnspython é instalado automaticamente"
     echo "  - As dependências podem ser instaladas automaticamente em sistemas Debian, Ubuntu e RHEL"
     echo
 }
