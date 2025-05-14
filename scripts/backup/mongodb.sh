@@ -10,7 +10,8 @@ DATE_FORMAT=$(date +%Y%m%d_%H%M%S)
 
 # Função para verificar dependências necessárias
 check_mongodb_deps() {
-    check_dependency "mongodump" "mongorestore" "mongosh"
+    # Verificar ferramentas MongoDB
+    check_dependency "mongodump" "mongorestore" "mongosh" "mongoexport" "mongoimport"
     
     # Verificar se o dnspython está instalado (necessário para mongodb+srv)
     if ! python3 -c "import dns" &>/dev/null; then
@@ -23,20 +24,30 @@ check_mongodb_deps() {
 # Função para obter lista de bancos excluindo os do sistema
 get_user_databases() {
     local uri="$1"
-    mongosh "$uri" --quiet --eval '
-        db.getMongo().getDBs().databases
-        .filter(db => !["admin", "local", "config"].includes(db.name))
+    local host port username password auth_db
+    parse_mongodb_uri "$uri" host port username password auth_db
+    
+    # Comando para listar bancos de dados
+    local list_cmd="db.getMongo().getDBs().databases
+        .filter(db => !['admin', 'local', 'config'].includes(db.name))
         .filter(db => db.sizeOnDisk > 0)
-        .map(db => db.name)
-    ' | tr -d '[],"'
+        .map(db => db.name)"
+    
+    execute_mongo_command "$host" "$port" "$username" "$password" "$list_cmd" | tr -d '[],"'
 }
 
 # Função para verificar permissões do usuário
 check_mongodb_permissions() {
     local uri="$1"
+    local host port username password auth_db
+    parse_mongodb_uri "$uri" host port username password auth_db
+    
     log_info "Verificando permissões do usuário..."
     
-    if ! mongosh "$uri" --quiet --eval 'db.adminCommand({listDatabases: 1})' &>/dev/null; then
+    # Comando para verificar permissões
+    local check_cmd="db.adminCommand({listDatabases: 1})"
+    
+    if ! execute_mongo_command "$host" "$port" "$username" "$password" "$check_cmd" >/dev/null 2>&1; then
         log_error "Usuário sem permissões suficientes. É necessário:"
         log_error "- Ser usuário root ou"
         log_error "- Ter role 'backup' ou 'readAnyDatabase' para backup"
@@ -135,25 +146,26 @@ execute_mongo_command() {
     local password="$4"
     local command="$5"
     
-    # Se a URI contém mongodb+srv, não usamos host e port separadamente
+    # Construir URI baseada no tipo de conexão
+    local uri
     if [[ "$host" == *".mongodb.net" ]]; then
+        # MongoDB Atlas
         if [ -n "$username" ] && [ -n "$password" ]; then
-            mongosh "mongodb+srv://$username:$password@$host" \
-                    --quiet --eval "$command"
+            uri="mongodb+srv://$username:$password@$host"
         else
-            mongosh "mongodb+srv://$host" \
-                    --quiet --eval "$command"
+            uri="mongodb+srv://$host"
         fi
     else
+        # MongoDB Local/Remoto
         if [ -n "$username" ] && [ -n "$password" ]; then
-            mongosh --host "$host" --port "$port" \
-                    --username "$username" --password "$password" \
-                    --quiet --eval "$command"
+            uri="mongodb://$username:$password@$host:$port"
         else
-            mongosh --host "$host" --port "$port" \
-                    --quiet --eval "$command"
+            uri="mongodb://$host:$port"
         fi
     fi
+    
+    # Executar comando com a URI construída
+    mongosh "$uri" --quiet --eval "$command"
 }
 
 # Função para testar conexão com MongoDB
@@ -162,7 +174,7 @@ test_mongodb_connection() {
     local host port username password auth_db
     parse_mongodb_uri "$uri" host port username password auth_db
     
-    # Se a URI contém mongodb+srv, mostramos mensagem sem porta
+    # Mostrar mensagem apropriada baseada no tipo de conexão
     if [[ "$uri" == *"mongodb+srv://"* ]]; then
         log_info "Testando conexão com MongoDB Atlas em $host..."
     else
@@ -172,26 +184,17 @@ test_mongodb_connection() {
     # Comando para testar a conexão
     local test_cmd="db.runCommand({ping: 1})"
     
-    # Se a URI contém mongodb+srv, usamos a URI completa
-    if [[ "$uri" == *"mongodb+srv://"* ]]; then
-        if ! mongosh "$uri" --quiet --eval "$test_cmd" >/dev/null 2>&1; then
-            log_error "Não foi possível conectar ao MongoDB Atlas"
-            log_error "Verifique:"
-            log_error "- Se o servidor está acessível"
-            log_error "- Se as credenciais estão corretas"
-            log_error "- Se o usuário tem as permissões necessárias"
+    # Testar conexão usando execute_mongo_command
+    if ! execute_mongo_command "$host" "$port" "$username" "$password" "$test_cmd" >/dev/null 2>&1; then
+        log_error "Não foi possível conectar ao MongoDB"
+        log_error "Verifique:"
+        log_error "- Se o servidor está acessível"
+        log_error "- Se as credenciais estão corretas"
+        log_error "- Se o usuário tem as permissões necessárias"
+        if [[ "$uri" == *"mongodb+srv://"* ]]; then
             log_error "- Se o IP do seu servidor está liberado no MongoDB Atlas"
-            return 1
         fi
-    else
-        if ! execute_mongo_command "$host" "$port" "$username" "$password" "$test_cmd" >/dev/null 2>&1; then
-            log_error "Não foi possível conectar ao MongoDB"
-            log_error "Verifique:"
-            log_error "- Se o servidor está acessível"
-            log_error "- Se as credenciais estão corretas"
-            log_error "- Se o usuário tem as permissões necessárias"
-            return 1
-        fi
+        return 1
     fi
     
     log_info "Conexão estabelecida com sucesso"
@@ -207,22 +210,26 @@ build_mongo_command() {
     local password="$5"
     local auth_db="$6"
     
-    # Se a URI contém mongodb+srv, construímos a URI completa
+    # Construir URI baseada no tipo de conexão
+    local uri
     if [[ "$host" == *".mongodb.net" ]]; then
+        # MongoDB Atlas
         if [ -n "$username" ] && [ -n "$password" ]; then
-            echo "$cmd --uri mongodb+srv://$username:$password@$host"
+            uri="mongodb+srv://$username:$password@$host"
         else
-            echo "$cmd --uri mongodb+srv://$host"
+            uri="mongodb+srv://$host"
         fi
     else
-        local base_cmd="$cmd --host $host --port $port"
-        
+        # MongoDB Local/Remoto
         if [ -n "$username" ] && [ -n "$password" ]; then
-            base_cmd="$base_cmd --username $username --password $password --authenticationDatabase $auth_db"
+            uri="mongodb://$username:$password@$host:$port"
+        else
+            uri="mongodb://$host:$port"
         fi
-        
-        echo "$base_cmd"
     fi
+    
+    # Retornar comando com a URI construída
+    echo "$cmd --uri $uri"
 }
 
 # Função para verificar existência do banco
@@ -270,10 +277,6 @@ do_dump() {
     
     log_info "Diretório de destino: $output_dir"
     
-    # Construir comando base usando função
-    local cmd_base
-    cmd_base=$(build_mongo_command "mongodump" "$host" "$port" "$username" "$password" "$auth_db")
-    
     # Obter lista de bancos
     log_info "Obtendo lista de bancos de dados..."
     local databases
@@ -300,11 +303,29 @@ do_dump() {
     for db in $databases; do
         log_info "Realizando dump do banco: $db"
         
-        # Construir comando completo para este banco
-        local cmd="$cmd_base --db=$db --out=$output_dir"
+        # Construir comando para este banco
+        local cmd="mongodump"
         
-        log_info "Executando: $cmd"
-        if eval "$cmd"; then
+        # Adicionar parâmetros de conexão
+        if [[ "$host" == *".mongodb.net" ]]; then
+            # MongoDB Atlas
+            if [ -n "$username" ] && [ -n "$password" ]; then
+                cmd="$cmd --uri mongodb+srv://$username:$password@$host"
+            else
+                cmd="$cmd --uri mongodb+srv://$host"
+            fi
+        else
+            # MongoDB Local/Remoto
+            cmd="$cmd --host $host --port $port"
+            if [ -n "$username" ] && [ -n "$password" ]; then
+                cmd="$cmd --username $username --password $password --authenticationDatabase $auth_db"
+            fi
+        fi
+        
+        # Adicionar parâmetros de dump
+        cmd="$cmd --db=$db --out=$output_dir"
+        
+        if eval "$cmd" >/dev/null 2>&1; then
             log_info "Dump do banco $db concluído com sucesso"
         else
             log_error "Falha no dump do banco $db"
@@ -352,10 +373,6 @@ do_restore() {
         exit 1
     fi
     
-    # Construir comando base usando função
-    local cmd_base
-    cmd_base=$(build_mongo_command "mongorestore" "$host" "$port" "$username" "$password" "$auth_db")
-    
     log_info "Iniciando restore MongoDB..."
     log_info "Diretório de origem: $backup_path"
     
@@ -370,7 +387,30 @@ do_restore() {
         fi
         
         log_info "Restaurando banco específico: $specific_db"
-        if eval "$cmd_base --db=$specific_db $db_path"; then
+        
+        # Construir comando para este banco
+        local cmd="mongorestore"
+        
+        # Adicionar parâmetros de conexão
+        if [[ "$host" == *".mongodb.net" ]]; then
+            # MongoDB Atlas
+            if [ -n "$username" ] && [ -n "$password" ]; then
+                cmd="$cmd --uri mongodb+srv://$username:$password@$host"
+            else
+                cmd="$cmd --uri mongodb+srv://$host"
+            fi
+        else
+            # MongoDB Local/Remoto
+            cmd="$cmd --host $host --port $port"
+            if [ -n "$username" ] && [ -n "$password" ]; then
+                cmd="$cmd --username $username --password $password --authenticationDatabase $auth_db"
+            fi
+        fi
+        
+        # Adicionar parâmetros de restore
+        cmd="$cmd --db=$specific_db $db_path"
+        
+        if eval "$cmd" >/dev/null 2>&1; then
             log_info "Restore do banco $specific_db concluído com sucesso"
         else
             log_error "Falha no restore do banco $specific_db"
@@ -383,6 +423,7 @@ do_restore() {
         # Encontrar todos os diretórios de bancos de dados no backup
         for db_path in "$backup_path"/*; do
             if [ -d "$db_path" ]; then
+                local db_name
                 db_name=$(basename "$db_path")
                 
                 # Pular bancos do sistema
@@ -392,7 +433,30 @@ do_restore() {
                 fi
                 
                 log_info "Restaurando banco: $db_name"
-                if eval "$cmd_base --db=$db_name $db_path"; then
+                
+                # Construir comando para este banco
+                local cmd="mongorestore"
+                
+                # Adicionar parâmetros de conexão
+                if [[ "$host" == *".mongodb.net" ]]; then
+                    # MongoDB Atlas
+                    if [ -n "$username" ] && [ -n "$password" ]; then
+                        cmd="$cmd --uri mongodb+srv://$username:$password@$host"
+                    else
+                        cmd="$cmd --uri mongodb+srv://$host"
+                    fi
+                else
+                    # MongoDB Local/Remoto
+                    cmd="$cmd --host $host --port $port"
+                    if [ -n "$username" ] && [ -n "$password" ]; then
+                        cmd="$cmd --username $username --password $password --authenticationDatabase $auth_db"
+                    fi
+                fi
+                
+                # Adicionar parâmetros de restore
+                cmd="$cmd --db=$db_name $db_path"
+                
+                if eval "$cmd" >/dev/null 2>&1; then
                     log_info "Restore do banco $db_name concluído com sucesso"
                 else
                     log_error "Falha no restore do banco $db_name"
@@ -522,10 +586,6 @@ do_export() {
     
     log_info "Diretório de destino: $output_dir"
     
-    # Construir comando base usando função
-    local cmd_base
-    cmd_base=$(build_mongo_command "mongoexport" "$host" "$port" "$username" "$password" "$auth_db")
-    
     # Obter lista de bancos
     log_info "Obtendo lista de bancos de dados..."
     local databases
@@ -566,7 +626,26 @@ do_export() {
             log_info "Exportando collection: $collection"
             
             # Construir comando para esta collection
-            local cmd="$cmd_base --db=$db --collection=$collection --out=$db_dir/${collection}.json"
+            local cmd="mongoexport"
+            
+            # Adicionar parâmetros de conexão
+            if [[ "$host" == *".mongodb.net" ]]; then
+                # MongoDB Atlas
+                if [ -n "$username" ] && [ -n "$password" ]; then
+                    cmd="$cmd --uri mongodb+srv://$username:$password@$host"
+                else
+                    cmd="$cmd --uri mongodb+srv://$host"
+                fi
+            else
+                # MongoDB Local/Remoto
+                cmd="$cmd --host $host --port $port"
+                if [ -n "$username" ] && [ -n "$password" ]; then
+                    cmd="$cmd --username $username --password $password --authenticationDatabase $auth_db"
+                fi
+            fi
+            
+            # Adicionar parâmetros de export
+            cmd="$cmd --db=$db --collection=$collection --out=$db_dir/${collection}.json"
             
             if eval "$cmd" >/dev/null 2>&1; then
                 log_info "Export da collection $collection concluído com sucesso"
@@ -614,10 +693,6 @@ do_import() {
         exit 1
     fi
     
-    # Construir comando base usando função
-    local cmd_base
-    cmd_base=$(build_mongo_command "mongoimport" "$host" "$port" "$username" "$password" "$auth_db")
-    
     log_info "Iniciando import MongoDB..."
     log_info "Diretório de origem: $backup_path"
     
@@ -641,7 +716,29 @@ do_import() {
                 collection=$(basename "$json_file" .json)
                 log_info "Importando collection: $collection"
                 
-                if eval "$cmd_base --db=$specific_db --collection=$collection --file=$json_file" >/dev/null 2>&1; then
+                # Construir comando para esta collection
+                local cmd="mongoimport"
+                
+                # Adicionar parâmetros de conexão
+                if [[ "$host" == *".mongodb.net" ]]; then
+                    # MongoDB Atlas
+                    if [ -n "$username" ] && [ -n "$password" ]; then
+                        cmd="$cmd --uri mongodb+srv://$username:$password@$host"
+                    else
+                        cmd="$cmd --uri mongodb+srv://$host"
+                    fi
+                else
+                    # MongoDB Local/Remoto
+                    cmd="$cmd --host $host --port $port"
+                    if [ -n "$username" ] && [ -n "$password" ]; then
+                        cmd="$cmd --username $username --password $password --authenticationDatabase $auth_db"
+                    fi
+                fi
+                
+                # Adicionar parâmetros de import
+                cmd="$cmd --db=$specific_db --collection=$collection --file=$json_file"
+                
+                if eval "$cmd" >/dev/null 2>&1; then
                     log_info "Import da collection $collection concluído com sucesso"
                 else
                     log_error "Falha no import da collection $collection"
@@ -675,7 +772,29 @@ do_import() {
                         collection=$(basename "$json_file" .json)
                         log_info "Importando collection: $collection"
                         
-                        if eval "$cmd_base --db=$db_name --collection=$collection --file=$json_file" >/dev/null 2>&1; then
+                        # Construir comando para esta collection
+                        local cmd="mongoimport"
+                        
+                        # Adicionar parâmetros de conexão
+                        if [[ "$host" == *".mongodb.net" ]]; then
+                            # MongoDB Atlas
+                            if [ -n "$username" ] && [ -n "$password" ]; then
+                                cmd="$cmd --uri mongodb+srv://$username:$password@$host"
+                            else
+                                cmd="$cmd --uri mongodb+srv://$host"
+                            fi
+                        else
+                            # MongoDB Local/Remoto
+                            cmd="$cmd --host $host --port $port"
+                            if [ -n "$username" ] && [ -n "$password" ]; then
+                                cmd="$cmd --username $username --password $password --authenticationDatabase $auth_db"
+                            fi
+                        fi
+                        
+                        # Adicionar parâmetros de import
+                        cmd="$cmd --db=$db_name --collection=$collection --file=$json_file"
+                        
+                        if eval "$cmd" >/dev/null 2>&1; then
                             log_info "Import da collection $collection concluído com sucesso"
                         else
                             log_error "Falha no import da collection $collection"
