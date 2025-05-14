@@ -7,12 +7,10 @@ source "/usr/local/lib/opsmaster/common.sh"
 # Configurações padrão
 BACKUP_DIR="${BACKUP_DIR:-/tmp/mongodb_backups}"
 DATE_FORMAT=$(date +%Y%m%d_%H%M%S)
-MONGODB_SOURCE_URI="${MONGODB_SOURCE_URI:-}"
-MONGODB_DEST_URI="${MONGODB_DEST_URI:-}"
 
 # Função para verificar dependências necessárias
 check_mongodb_deps() {
-    check_dependency "mongodump" "mongorestore" "mongosh" "mongoexport" "mongoimport"
+    check_dependency "mongodump" "mongorestore" "mongosh"
     
     # Verificar se o dnspython está instalado (necessário para mongodb+srv)
     if ! python3 -c "import dns" &>/dev/null; then
@@ -22,428 +20,77 @@ check_mongodb_deps() {
     fi
 }
 
-# Função para verificar e estabelecer conexão
-verify_mongodb_connection() {
+# Função para obter lista de bancos excluindo os do sistema
+get_user_databases() {
     local uri="$1"
-    local operation="$2"
-    
-    # Verificar dependências antes de prosseguir
-    check_mongodb_deps
-    
-    # Testar conexão antes de prosseguir
-    if ! test_mongodb_connection "$uri"; then
-        exit 1
-    fi
-    
-    # Extrair credenciais da URI
-    local host port username password auth_db
-    parse_mongodb_uri "$uri" host port username password auth_db
-    
-    log_info "Conectando ao MongoDB em $host:$port para $operation"
-    
-    echo "$host:$port:$username:$password:$auth_db"
+    mongosh "$uri" --quiet --eval '
+        db.getMongo().getDBs().databases
+        .filter(db => !["admin", "local", "config"].includes(db.name))
+        .filter(db => db.sizeOnDisk > 0)
+        .map(db => db.name)
+    ' | tr -d '[],"'
 }
 
-# Função para criar e verificar diretório
-setup_backup_directory() {
-    local base_dir="$1"
-    local prefix="$2"
-    local specific_db="$3"
+# Função para verificar permissões do usuário
+check_mongodb_permissions() {
+    local uri="$1"
+    log_info "Verificando permissões do usuário..."
     
-    local output_dir="$base_dir/${specific_db:-$prefix}_${DATE_FORMAT}"
-    
-    # Criar diretório de saída
-    if ! mkdir -p "$output_dir"; then
-        log_error "Não foi possível criar o diretório: $output_dir"
+    if ! mongosh "$uri" --quiet --eval 'db.adminCommand({listDatabases: 1})' &>/dev/null; then
+        log_error "Usuário sem permissões suficientes. É necessário:"
+        log_error "- Ser usuário root ou"
+        log_error "- Ter role 'backup' ou 'readAnyDatabase' para backup"
+        log_error "- Ter role 'restore' ou 'readWriteAnyDatabase' para restore"
         exit 1
     fi
-    
-    log_info "Diretório de destino: $output_dir"
-    echo "$output_dir"
 }
 
-# Função para obter lista de bancos
-get_databases_list() {
+# Função para processar a URI do MongoDB
+process_mongodb_uri() {
     local uri="$1"
-    local specific_db="$2"
-    local host port username password auth_db
-    
-    IFS=':' read -r host port username password auth_db <<< "$(verify_mongodb_connection "$uri" "listar bancos")"
-    
-    if [ -n "$specific_db" ]; then
-        check_database_exists "$host" "$port" "$username" "$password" "$specific_db"
-        echo "$specific_db"
+    local base_uri
+
+    # Se a URI termina com /, retorna ela mesma
+    if [[ "$uri" =~ /$ ]]; then
+        echo "$uri"
+        return
+    fi
+
+    # Se a URI contém parâmetros de query (?), adiciona / antes do ?
+    if [[ "$uri" =~ \? ]]; then
+        base_uri=$(echo "$uri" | sed -E 's/\/[^/?]+(\?.+)$/\/\1/')
     else
-        get_user_databases "$uri"
+        # Se não tem query, apenas adiciona / no final
+        base_uri="${uri%/*}/"
     fi
+
+    echo "$base_uri"
 }
 
-# Função para construir comando base MongoDB
-build_mongo_command() {
-    local cmd="$1"
-    local host="$2"
-    local port="$3"
-    local username="$4"
-    local password="$5"
-    local auth_db="$6"
+# Função para extrair credenciais da URI MongoDB
+parse_mongodb_uri() {
+    local uri="$1"
+    local -n ref_host=$2
+    local -n ref_port=$3
+    local -n ref_username=$4
+    local -n ref_password=$5
+    local -n ref_auth_db=$6
     
-    # Se a URI contém mongodb+srv, construímos a URI completa
-    if [[ "$host" == *".mongodb.net" ]]; then
-        if [ -n "$username" ] && [ -n "$password" ]; then
-            echo "$cmd --uri mongodb+srv://$username:$password@$host"
-        else
-            echo "$cmd --uri mongodb+srv://$host"
-        fi
+    # Padrão para parsing da URI mongodb://[username:password@]host[:port][/database][?options]
+    # ou mongodb+srv://[username:password@]host[/database][?options]
+    if [[ "$uri" =~ mongodb(\+srv)?://([^:@]+):([^@]+)@([^:/]+)(:([0-9]+))?/?(.*) ]]; then
+        ref_username="${BASH_REMATCH[2]}"
+        ref_password="${BASH_REMATCH[3]}"
+        ref_host="${BASH_REMATCH[4]}"
+        ref_port="${BASH_REMATCH[6]:-27017}"
+        ref_auth_db="admin"
     else
-        local base_cmd="$cmd --host $host --port $port"
-        
-        if [ -n "$username" ] && [ -n "$password" ]; then
-            base_cmd="$base_cmd --username $username --password $password --authenticationDatabase $auth_db"
-        fi
-        
-        echo "$base_cmd"
+        ref_host="localhost"
+        ref_port="27017"
+        ref_username=""
+        ref_password=""
+        ref_auth_db=""
     fi
-}
-
-# Função para realizar dump
-do_dump() {
-    local uri="$1"
-    local specific_db="$2"
-    local custom_dir="$3"
-    
-    local host port username password auth_db
-    IFS=':' read -r host port username password auth_db <<< "$(verify_mongodb_connection "$uri" "dump")"
-    
-    # Usar diretório personalizado se fornecido, senão usar BACKUP_DIR padrão
-    local base_dir="${custom_dir:-$BACKUP_DIR}"
-    local output_dir
-    output_dir=$(setup_backup_directory "$base_dir" "all" "$specific_db")
-    
-    # Construir comando base usando função
-    local cmd_base
-    cmd_base=$(build_mongo_command "mongodump" "$host" "$port" "$username" "$password" "$auth_db")
-    
-    # Obter lista de bancos
-    log_info "Obtendo lista de bancos de dados..."
-    local databases
-    databases=$(get_databases_list "$uri" "$specific_db")
-    
-    if [ -z "$databases" ]; then
-        log_error "Nenhum banco de dados encontrado para dump"
-        exit 1
-    fi
-    
-    # Realizar dump de cada banco
-    for db in $databases; do
-        log_info "Realizando dump do banco: $db"
-        
-        # Construir comando completo para este banco
-        local cmd="$cmd_base --db=$db --out=$output_dir"
-        
-        log_info "Executando: $cmd"
-        if eval "$cmd"; then
-            log_info "Dump do banco $db concluído com sucesso"
-        else
-            log_error "Falha no dump do banco $db"
-            exit 1
-        fi
-    done
-    
-    # Mostrar informações do dump completo
-    log_info "Dump completo!"
-    log_info "Diretório: $output_dir"
-    
-    # Mostrar tamanho de cada banco backupeado
-    show_backup_sizes "$output_dir"
-}
-
-# Função para realizar restore
-do_restore() {
-    local uri="$1"
-    local backup_path="$2"
-    local specific_db="$3"
-    local db_mapping="$4"  # Novo parâmetro para mapeamento de bancos
-    
-    local host port username password auth_db
-    IFS=':' read -r host port username password auth_db <<< "$(verify_mongodb_connection "$uri" "restore")"
-    
-    # Ajustar caminho do backup se necessário
-    if [[ ! "$backup_path" = /* ]]; then
-        backup_path="$BACKUP_DIR/$backup_path"
-    fi
-    
-    if [ ! -d "$backup_path" ]; then
-        log_error "Diretório de backup não encontrado: $backup_path"
-        log_error "Backups disponíveis:"
-        list_backups
-        exit 1
-    fi
-    
-    # Construir comando base usando função
-    local cmd_base
-    cmd_base=$(build_mongo_command "mongorestore" "$host" "$port" "$username" "$password" "$auth_db")
-    
-    log_info "Iniciando restore MongoDB..."
-    log_info "Diretório de origem: $backup_path"
-    
-    # Se um banco específico foi solicitado
-    if [ -n "$specific_db" ]; then
-        # Verificar se há mapeamento para este banco
-        local target_db="$specific_db"
-        if [ -n "$db_mapping" ]; then
-            # Procurar o mapeamento no formato "origem:destino"
-            while IFS=: read -r source_db dest_db; do
-                if [ "$source_db" = "$specific_db" ]; then
-                    target_db="$dest_db"
-                    log_info "Mapeando banco de origem '$source_db' para destino '$dest_db'"
-                    break
-                fi
-            done <<< "$db_mapping"
-        fi
-        
-        local db_path="$backup_path/$specific_db"
-        if [ ! -d "$db_path" ]; then
-            log_error "Banco $specific_db não encontrado no backup: $backup_path"
-            log_info "Bancos disponíveis neste backup:"
-            ls -1 "$backup_path"
-            exit 1
-        fi
-        
-        log_info "Restaurando banco específico: $specific_db -> $target_db"
-        if eval "$cmd_base --db=$target_db $db_path"; then
-            log_info "Restore do banco $target_db concluído com sucesso"
-        else
-            log_error "Falha no restore do banco $target_db"
-            exit 1
-        fi
-    else
-        # Restore de todos os bancos
-        log_info "Restaurando todos os bancos do backup..."
-        
-        # Encontrar todos os diretórios de bancos de dados no backup
-        for db_path in "$backup_path"/*; do
-            if [ -d "$db_path" ]; then
-                local source_db
-                source_db=$(basename "$db_path")
-                
-                # Pular bancos do sistema
-                if [[ "$source_db" =~ ^(admin|local|config)$ ]]; then
-                    log_warn "Pulando banco do sistema: $source_db"
-                    continue
-                fi
-                
-                # Verificar se há mapeamento para este banco
-                local target_db="$source_db"
-                if [ -n "$db_mapping" ]; then
-                    # Procurar o mapeamento no formato "origem:destino"
-                    while IFS=: read -r map_source map_dest; do
-                        if [ "$map_source" = "$source_db" ]; then
-                            target_db="$map_dest"
-                            log_info "Mapeando banco de origem '$map_source' para destino '$map_dest'"
-                            break
-                        fi
-                    done <<< "$db_mapping"
-                fi
-                
-                log_info "Restaurando banco: $source_db -> $target_db"
-                if eval "$cmd_base --db=$target_db $db_path"; then
-                    log_info "Restore do banco $target_db concluído com sucesso"
-                else
-                    log_error "Falha no restore do banco $target_db"
-                    exit 1
-                fi
-            fi
-        done
-    fi
-    
-    log_info "Restore completo!"
-}
-
-# Função para realizar export
-do_export() {
-    local uri="$1"
-    local specific_db="$2"
-    local custom_dir="$3"
-    
-    local host port username password auth_db
-    IFS=':' read -r host port username password auth_db <<< "$(verify_mongodb_connection "$uri" "export")"
-    
-    # Usar diretório personalizado se fornecido, senão usar BACKUP_DIR padrão
-    local base_dir="${custom_dir:-$BACKUP_DIR}"
-    local output_dir
-    output_dir=$(setup_backup_directory "$base_dir" "all_export" "$specific_db")
-    
-    # Construir comando base usando função
-    local cmd_base
-    cmd_base=$(build_mongo_command "mongoexport" "$host" "$port" "$username" "$password" "$auth_db")
-    
-    # Obter lista de bancos
-    log_info "Obtendo lista de bancos de dados..."
-    local databases
-    databases=$(get_databases_list "$uri" "$specific_db")
-    
-    if [ -z "$databases" ]; then
-        log_error "Nenhum banco de dados encontrado para export"
-        exit 1
-    fi
-    
-    # Realizar export de cada banco
-    for db in $databases; do
-        log_info "Realizando export do banco: $db"
-        
-        # Criar diretório para o banco
-        local db_dir="$output_dir/$db"
-        mkdir -p "$db_dir"
-        
-        # Obter lista de collections
-        local collections
-        collections=$(execute_mongo_command "$host" "$port" "$username" "$password" "db.getSiblingDB('$db').getCollectionNames()" | tr -d '[],"')
-        
-        # Exportar cada collection
-        for collection in $collections; do
-            log_info "Exportando collection: $collection"
-            
-            # Construir comando para esta collection
-            local cmd="$cmd_base --db=$db --collection=$collection --out=$db_dir/${collection}.json"
-            
-            log_info "Executando: $cmd"
-            if eval "$cmd"; then
-                log_info "Export da collection $collection concluído com sucesso"
-            else
-                log_error "Falha no export da collection $collection"
-                exit 1
-            fi
-        done
-    done
-    
-    # Mostrar informações do export completo
-    log_info "Export completo!"
-    log_info "Diretório: $output_dir"
-    
-    # Mostrar tamanho de cada banco exportado
-    show_backup_sizes "$output_dir"
-}
-
-# Função para realizar import
-do_import() {
-    local uri="$1"
-    local backup_path="$2"
-    local specific_db="$3"
-    local db_mapping="$4"  # Novo parâmetro para mapeamento de bancos
-    
-    local host port username password auth_db
-    IFS=':' read -r host port username password auth_db <<< "$(verify_mongodb_connection "$uri" "import")"
-    
-    # Ajustar caminho do backup se necessário
-    if [[ ! "$backup_path" = /* ]]; then
-        backup_path="$BACKUP_DIR/$backup_path"
-    fi
-    
-    if [ ! -d "$backup_path" ]; then
-        log_error "Diretório de backup não encontrado: $backup_path"
-        log_error "Backups disponíveis:"
-        list_backups
-        exit 1
-    fi
-    
-    # Construir comando base usando função
-    local cmd_base
-    cmd_base=$(build_mongo_command "mongoimport" "$host" "$port" "$username" "$password" "$auth_db")
-    
-    log_info "Iniciando import MongoDB..."
-    log_info "Diretório de origem: $backup_path"
-    
-    # Se um banco específico foi solicitado
-    if [ -n "$specific_db" ]; then
-        # Verificar se há mapeamento para este banco
-        local target_db="$specific_db"
-        if [ -n "$db_mapping" ]; then
-            # Procurar o mapeamento no formato "origem:destino"
-            while IFS=: read -r source_db dest_db; do
-                if [ "$source_db" = "$specific_db" ]; then
-                    target_db="$dest_db"
-                    log_info "Mapeando banco de origem '$source_db' para destino '$dest_db'"
-                    break
-                fi
-            done <<< "$db_mapping"
-        fi
-        
-        local db_path="$backup_path/$specific_db"
-        if [ ! -d "$db_path" ]; then
-            log_error "Banco $specific_db não encontrado no backup: $backup_path"
-            log_info "Bancos disponíveis neste backup:"
-            ls -1 "$backup_path"
-            exit 1
-        fi
-        
-        log_info "Importando banco específico: $specific_db -> $target_db"
-        
-        # Importar cada arquivo JSON no diretório do banco
-        for json_file in "$db_path"/*.json; do
-            if [ -f "$json_file" ]; then
-                local collection
-                collection=$(basename "$json_file" .json)
-                log_info "Importando collection: $collection"
-                
-                if eval "$cmd_base --db=$target_db --collection=$collection --file=$json_file"; then
-                    log_info "Import da collection $collection concluído com sucesso"
-                else
-                    log_error "Falha no import da collection $collection"
-                    exit 1
-                fi
-            fi
-        done
-    else
-        # Import de todos os bancos
-        log_info "Importando todos os bancos do backup..."
-        
-        # Encontrar todos os diretórios de bancos de dados no backup
-        for db_path in "$backup_path"/*; do
-            if [ -d "$db_path" ]; then
-                local source_db
-                source_db=$(basename "$db_path")
-                
-                # Pular bancos do sistema
-                if [[ "$source_db" =~ ^(admin|local|config)$ ]]; then
-                    log_warn "Pulando banco do sistema: $source_db"
-                    continue
-                fi
-                
-                # Verificar se há mapeamento para este banco
-                local target_db="$source_db"
-                if [ -n "$db_mapping" ]; then
-                    # Procurar o mapeamento no formato "origem:destino"
-                    while IFS=: read -r map_source map_dest; do
-                        if [ "$map_source" = "$source_db" ]; then
-                            target_db="$map_dest"
-                            log_info "Mapeando banco de origem '$map_source' para destino '$map_dest'"
-                            break
-                        fi
-                    done <<< "$db_mapping"
-                fi
-                
-                log_info "Importando banco: $source_db -> $target_db"
-                
-                # Importar cada arquivo JSON no diretório do banco
-                for json_file in "$db_path"/*.json; do
-                    if [ -f "$json_file" ]; then
-                        local collection
-                        collection=$(basename "$json_file" .json)
-                        log_info "Importando collection: $collection"
-                        
-                        if eval "$cmd_base --db=$target_db --collection=$collection --file=$json_file"; then
-                            log_info "Import da collection $collection concluído com sucesso"
-                        else
-                            log_error "Falha no import da collection $collection"
-                            exit 1
-                        fi
-                    fi
-                done
-            fi
-        done
-    fi
-    
-    log_info "Import completo!"
 }
 
 # Função para mostrar tamanho dos bancos backupeados
@@ -551,6 +198,33 @@ test_mongodb_connection() {
     return 0
 }
 
+# Função para construir comando base MongoDB
+build_mongo_command() {
+    local cmd="$1"
+    local host="$2"
+    local port="$3"
+    local username="$4"
+    local password="$5"
+    local auth_db="$6"
+    
+    # Se a URI contém mongodb+srv, construímos a URI completa
+    if [[ "$host" == *".mongodb.net" ]]; then
+        if [ -n "$username" ] && [ -n "$password" ]; then
+            echo "$cmd --uri mongodb+srv://$username:$password@$host"
+        else
+            echo "$cmd --uri mongodb+srv://$host"
+        fi
+    else
+        local base_cmd="$cmd --host $host --port $port"
+        
+        if [ -n "$username" ] && [ -n "$password" ]; then
+            base_cmd="$base_cmd --username $username --password $password --authenticationDatabase $auth_db"
+        fi
+        
+        echo "$base_cmd"
+    fi
+}
+
 # Função para verificar existência do banco
 check_database_exists() {
     local host="$1"
@@ -567,77 +241,168 @@ check_database_exists() {
     fi
 }
 
-# Função para obter lista de bancos excluindo os do sistema
-get_user_databases() {
+# Função para realizar dump
+do_dump() {
     local uri="$1"
-    mongosh "$uri" --quiet --eval '
-        db.getMongo().getDBs().databases
-        .filter(db => !["admin", "local", "config"].includes(db.name))
-        .filter(db => db.sizeOnDisk > 0)
-        .map(db => db.name)
-    ' | tr -d '[],"'
-}
-
-# Função para verificar permissões do usuário
-check_mongodb_permissions() {
-    local uri="$1"
-    log_info "Verificando permissões do usuário..."
+    local specific_db="$2"
+    local custom_dir="$3"
     
-    if ! mongosh "$uri" --quiet --eval 'db.adminCommand({listDatabases: 1})' &>/dev/null; then
-        log_error "Usuário sem permissões suficientes. É necessário:"
-        log_error "- Ser usuário root ou"
-        log_error "- Ter role 'backup' ou 'readAnyDatabase' para backup"
-        log_error "- Ter role 'restore' ou 'readWriteAnyDatabase' para restore"
+    # Testar conexão antes de prosseguir
+    if ! test_mongodb_connection "$uri"; then
         exit 1
     fi
-}
-
-# Função para processar a URI do MongoDB
-process_mongodb_uri() {
-    local uri="$1"
-    local base_uri
-
-    # Se a URI termina com /, retorna ela mesma
-    if [[ "$uri" =~ /$ ]]; then
-        echo "$uri"
-        return
-    fi
-
-    # Se a URI contém parâmetros de query (?), adiciona / antes do ?
-    if [[ "$uri" =~ \? ]]; then
-        base_uri=$(echo "$uri" | sed -E 's/\/[^/?]+(\?.+)$/\/\1/')
-    else
-        # Se não tem query, apenas adiciona / no final
-        base_uri="${uri%/*}/"
-    fi
-
-    echo "$base_uri"
-}
-
-# Função para extrair credenciais da URI MongoDB
-parse_mongodb_uri() {
-    local uri="$1"
-    local -n ref_host=$2
-    local -n ref_port=$3
-    local -n ref_username=$4
-    local -n ref_password=$5
-    local -n ref_auth_db=$6
     
-    # Padrão para parsing da URI mongodb://[username:password@]host[:port][/database][?options]
-    # ou mongodb+srv://[username:password@]host[/database][?options]
-    if [[ "$uri" =~ mongodb(\+srv)?://([^:@]+):([^@]+)@([^:/]+)(:([0-9]+))?/?(.*) ]]; then
-        ref_username="${BASH_REMATCH[2]}"
-        ref_password="${BASH_REMATCH[3]}"
-        ref_host="${BASH_REMATCH[4]}"
-        ref_port="${BASH_REMATCH[6]:-27017}"
-        ref_auth_db="admin"
-    else
-        ref_host="localhost"
-        ref_port="27017"
-        ref_username=""
-        ref_password=""
-        ref_auth_db=""
+    # Extrair credenciais da URI
+    local host port username password auth_db
+    parse_mongodb_uri "$uri" host port username password auth_db
+    
+    log_info "Conectando ao MongoDB em $host:$port"
+    
+    # Usar diretório personalizado se fornecido, senão usar BACKUP_DIR padrão
+    local base_dir="${custom_dir:-$BACKUP_DIR}"
+    local output_dir="$base_dir/${specific_db:-all}_${DATE_FORMAT}"
+    
+    # Criar diretório de saída
+    if ! mkdir -p "$output_dir"; then
+        log_error "Não foi possível criar o diretório: $output_dir"
+        exit 1
     fi
+    
+    log_info "Diretório de destino: $output_dir"
+    
+    # Construir comando base usando função
+    local cmd_base
+    cmd_base=$(build_mongo_command "mongodump" "$host" "$port" "$username" "$password" "$auth_db")
+    
+    # Obter lista de bancos
+    log_info "Obtendo lista de bancos de dados..."
+    local databases
+    
+    if [ -n "$specific_db" ]; then
+        check_database_exists "$host" "$port" "$username" "$password" "$specific_db"
+        databases="$specific_db"
+        log_info "Realizando dump do banco específico: $specific_db"
+    else
+        local mongo_cmd="db.adminCommand('listDatabases').databases"
+        mongo_cmd="$mongo_cmd.filter(db => !['admin', 'local', 'config'].includes(db.name))"
+        mongo_cmd="$mongo_cmd.map(db => db.name)"
+        
+        databases=$(execute_mongo_command "$host" "$port" "$username" "$password" "$mongo_cmd" | tr -d '[],"')
+        log_info "Realizando dump de todos os bancos"
+    fi
+    
+    if [ -z "$databases" ]; then
+        log_error "Nenhum banco de dados encontrado para dump"
+        exit 1
+    fi
+    
+    # Realizar dump de cada banco
+    for db in $databases; do
+        log_info "Realizando dump do banco: $db"
+        
+        # Construir comando completo para este banco
+        local cmd="$cmd_base --db=$db --out=$output_dir"
+        
+        log_info "Executando: $cmd"
+        if eval "$cmd"; then
+            log_info "Dump do banco $db concluído com sucesso"
+        else
+            log_error "Falha no dump do banco $db"
+            exit 1
+        fi
+    done
+    
+    # Mostrar informações do dump completo
+    log_info "Dump completo!"
+    log_info "Diretório: $output_dir"
+    
+    # Mostrar tamanho de cada banco backupeado
+    show_backup_sizes "$output_dir"
+}
+
+# Função para realizar restore
+do_restore() {
+    local uri="$1"
+    local backup_path="$2"
+    local specific_db="$3"
+    
+    # Verificar dependências antes de prosseguir
+    check_mongodb_deps
+    
+    # Testar conexão antes de prosseguir
+    if ! test_mongodb_connection "$uri"; then
+        exit 1
+    fi
+    
+    # Extrair credenciais da URI
+    local host port username password auth_db
+    parse_mongodb_uri "$uri" host port username password auth_db
+    
+    log_info "Conectando ao MongoDB em $host:$port"
+    
+    # Ajustar caminho do backup se necessário
+    if [[ ! "$backup_path" = /* ]]; then
+        backup_path="$BACKUP_DIR/$backup_path"
+    fi
+    
+    if [ ! -d "$backup_path" ]; then
+        log_error "Diretório de backup não encontrado: $backup_path"
+        log_error "Backups disponíveis:"
+        list_backups
+        exit 1
+    fi
+    
+    # Construir comando base usando função
+    local cmd_base
+    cmd_base=$(build_mongo_command "mongorestore" "$host" "$port" "$username" "$password" "$auth_db")
+    
+    log_info "Iniciando restore MongoDB..."
+    log_info "Diretório de origem: $backup_path"
+    
+    # Se um banco específico foi solicitado
+    if [ -n "$specific_db" ]; then
+        local db_path="$backup_path/$specific_db"
+        if [ ! -d "$db_path" ]; then
+            log_error "Banco $specific_db não encontrado no backup: $backup_path"
+            log_info "Bancos disponíveis neste backup:"
+            ls -1 "$backup_path"
+            exit 1
+        fi
+        
+        log_info "Restaurando banco específico: $specific_db"
+        if eval "$cmd_base --db=$specific_db $db_path"; then
+            log_info "Restore do banco $specific_db concluído com sucesso"
+        else
+            log_error "Falha no restore do banco $specific_db"
+            exit 1
+        fi
+    else
+        # Restore de todos os bancos
+        log_info "Restaurando todos os bancos do backup..."
+        
+        # Encontrar todos os diretórios de bancos de dados no backup
+        for db_path in "$backup_path"/*; do
+            if [ -d "$db_path" ]; then
+                db_name=$(basename "$db_path")
+                
+                # Pular bancos do sistema
+                if [[ "$db_name" =~ ^(admin|local|config)$ ]]; then
+                    log_warn "Pulando banco do sistema: $db_name"
+                    continue
+                fi
+                
+                log_info "Restaurando banco: $db_name"
+                if eval "$cmd_base --db=$db_name $db_path"; then
+                    log_info "Restore do banco $db_name concluído com sucesso"
+                else
+                    log_error "Falha no restore do banco $db_name"
+                    exit 1
+                fi
+            fi
+        done
+    fi
+    
+    log_info "Restore completo!"
 }
 
 # Função para listar backups disponíveis
@@ -728,68 +493,201 @@ EOF
     fi
 }
 
-# Função para realizar backup/restore em um único comando
-do_backup_restore() {
-    local mode="$1"  # dump ou export
-    local source_uri="$2"
-    local dest_uri="$3"
-    local specific_db="$4"
-    local custom_dir="$5"
-    local db_mapping="$6"  # Novo parâmetro para mapeamento de bancos
+# Função para realizar export
+do_export() {
+    local uri="$1"
+    local specific_db="$2"
+    local custom_dir="$3"
     
-    # Verificar URIs
-    if [ -z "$source_uri" ]; then
-        source_uri="$MONGODB_SOURCE_URI"
-        if [ -z "$source_uri" ]; then
-            log_error "URI de origem não especificada"
-            log_error "Use --source ou defina MONGODB_SOURCE_URI"
-            exit 1
-        fi
-    fi
-    
-    if [ -z "$dest_uri" ]; then
-        dest_uri="$MONGODB_DEST_URI"
-        if [ -z "$dest_uri" ]; then
-            log_error "URI de destino não especificada"
-            log_error "Use --dest ou defina MONGODB_DEST_URI"
-            exit 1
-        fi
-    fi
-    
-    # Criar diretório temporário para o backup
-    local temp_dir
-    temp_dir=$(mktemp -d)
-    
-    # Realizar backup
-    log_info "Realizando backup do banco de origem..."
-    if [ "$mode" = "dump" ]; then
-        do_dump "$source_uri" "$specific_db" "$temp_dir"
-    else
-        do_export "$source_uri" "$specific_db" "$temp_dir"
-    fi
-    
-    # Encontrar o diretório de backup criado
-    local backup_path
-    backup_path=$(find "$temp_dir" -maxdepth 1 -type d | sort -r | head -n1)
-    
-    if [ -z "$backup_path" ]; then
-        log_error "Falha ao localizar diretório de backup"
-        rm -rf "$temp_dir"
+    # Testar conexão antes de prosseguir
+    if ! test_mongodb_connection "$uri"; then
         exit 1
     fi
     
-    # Realizar restore
-    log_info "Realizando restore no banco de destino..."
-    if [ "$mode" = "dump" ]; then
-        do_restore "$dest_uri" "$backup_path" "$specific_db" "$db_mapping"
-    else
-        do_import "$dest_uri" "$backup_path" "$specific_db" "$db_mapping"
+    # Extrair credenciais da URI
+    local host port username password auth_db
+    parse_mongodb_uri "$uri" host port username password auth_db
+    
+    log_info "Conectando ao MongoDB em $host:$port"
+    
+    # Usar diretório personalizado se fornecido, senão usar BACKUP_DIR padrão
+    local base_dir="${custom_dir:-$BACKUP_DIR}"
+    local output_dir="$base_dir/${specific_db:-all_export}_${DATE_FORMAT}"
+    
+    # Criar diretório de saída
+    if ! mkdir -p "$output_dir"; then
+        log_error "Não foi possível criar o diretório: $output_dir"
+        exit 1
     fi
     
-    # Limpar diretório temporário
-    rm -rf "$temp_dir"
+    log_info "Diretório de destino: $output_dir"
     
-    log_info "Operação concluída com sucesso!"
+    # Construir comando base usando função
+    local cmd_base
+    cmd_base=$(build_mongo_command "mongoexport" "$host" "$port" "$username" "$password" "$auth_db")
+    
+    # Obter lista de bancos
+    log_info "Obtendo lista de bancos de dados..."
+    local databases
+    
+    if [ -n "$specific_db" ]; then
+        check_database_exists "$host" "$port" "$username" "$password" "$specific_db"
+        databases="$specific_db"
+        log_info "Realizando export do banco específico: $specific_db"
+    else
+        local mongo_cmd="db.adminCommand('listDatabases').databases"
+        mongo_cmd="$mongo_cmd.filter(db => !['admin', 'local', 'config'].includes(db.name))"
+        mongo_cmd="$mongo_cmd.map(db => db.name)"
+        
+        databases=$(execute_mongo_command "$host" "$port" "$username" "$password" "$mongo_cmd" | tr -d '[],"')
+        log_info "Realizando export de todos os bancos"
+    fi
+    
+    if [ -z "$databases" ]; then
+        log_error "Nenhum banco de dados encontrado para export"
+        exit 1
+    fi
+    
+    # Realizar export de cada banco
+    for db in $databases; do
+        log_info "Realizando export do banco: $db"
+        
+        # Criar diretório para o banco
+        local db_dir="$output_dir/$db"
+        mkdir -p "$db_dir"
+        
+        # Obter lista de collections
+        local collections
+        collections=$(execute_mongo_command "$host" "$port" "$username" "$password" "db.getSiblingDB('$db').getCollectionNames()" | tr -d '[],"')
+        log_info "Exportando todas as collections do banco $db"
+        
+        # Exportar cada collection
+        for collection in $collections; do
+            log_info "Exportando collection: $collection"
+            
+            # Construir comando para esta collection
+            local cmd="$cmd_base --db=$db --collection=$collection --out=$db_dir/${collection}.json"
+            
+            if eval "$cmd" >/dev/null 2>&1; then
+                log_info "Export da collection $collection concluído com sucesso"
+            else
+                log_error "Falha no export da collection $collection"
+                exit 1
+            fi
+        done
+    done
+    
+    # Mostrar informações do export completo
+    log_info "Export completo!"
+    log_info "Diretório: $output_dir"
+    
+    # Mostrar tamanho de cada banco exportado
+    show_backup_sizes "$output_dir"
+}
+
+# Função para realizar import
+do_import() {
+    local uri="$1"
+    local backup_path="$2"
+    local specific_db="$3"
+    
+    # Testar conexão antes de prosseguir
+    if ! test_mongodb_connection "$uri"; then
+        exit 1
+    fi
+    
+    # Extrair credenciais da URI
+    local host port username password auth_db
+    parse_mongodb_uri "$uri" host port username password auth_db
+    
+    log_info "Conectando ao MongoDB em $host:$port"
+    
+    # Ajustar caminho do backup se necessário
+    if [[ ! "$backup_path" = /* ]]; then
+        backup_path="$BACKUP_DIR/$backup_path"
+    fi
+    
+    if [ ! -d "$backup_path" ]; then
+        log_error "Diretório de backup não encontrado: $backup_path"
+        log_error "Backups disponíveis:"
+        list_backups
+        exit 1
+    fi
+    
+    # Construir comando base usando função
+    local cmd_base
+    cmd_base=$(build_mongo_command "mongoimport" "$host" "$port" "$username" "$password" "$auth_db")
+    
+    log_info "Iniciando import MongoDB..."
+    log_info "Diretório de origem: $backup_path"
+    
+    # Se um banco específico foi solicitado
+    if [ -n "$specific_db" ]; then
+        local db_path="$backup_path/$specific_db"
+        if [ ! -d "$db_path" ]; then
+            log_error "Banco $specific_db não encontrado no backup: $backup_path"
+            log_info "Bancos disponíveis neste backup:"
+            ls -1 "$backup_path"
+            exit 1
+        fi
+        
+        log_info "Importando banco específico: $specific_db"
+        
+        # Importar todas as collections do banco
+        log_info "Importando todas as collections do banco $specific_db"
+        for json_file in "$db_path"/*.json; do
+            if [ -f "$json_file" ]; then
+                local collection
+                collection=$(basename "$json_file" .json)
+                log_info "Importando collection: $collection"
+                
+                if eval "$cmd_base --db=$specific_db --collection=$collection --file=$json_file" >/dev/null 2>&1; then
+                    log_info "Import da collection $collection concluído com sucesso"
+                else
+                    log_error "Falha no import da collection $collection"
+                    exit 1
+                fi
+            fi
+        done
+    else
+        # Import de todos os bancos
+        log_info "Importando todos os bancos do backup..."
+        
+        # Encontrar todos os diretórios de bancos de dados no backup
+        for db_path in "$backup_path"/*; do
+            if [ -d "$db_path" ]; then
+                local db_name
+                db_name=$(basename "$db_path")
+                
+                # Pular bancos do sistema
+                if [[ "$db_name" =~ ^(admin|local|config)$ ]]; then
+                    log_warn "Pulando banco do sistema: $db_name"
+                    continue
+                fi
+                
+                log_info "Importando banco: $db_name"
+                
+                # Importar todas as collections do banco
+                log_info "Importando todas as collections do banco $db_name"
+                for json_file in "$db_path"/*.json; do
+                    if [ -f "$json_file" ]; then
+                        local collection
+                        collection=$(basename "$json_file" .json)
+                        log_info "Importando collection: $collection"
+                        
+                        if eval "$cmd_base --db=$db_name --collection=$collection --file=$json_file" >/dev/null 2>&1; then
+                            log_info "Import da collection $collection concluído com sucesso"
+                        else
+                            log_error "Falha no import da collection $collection"
+                            exit 1
+                        fi
+                    fi
+                done
+            fi
+        done
+    fi
+    
+    log_info "Import completo!"
 }
 
 # Função de ajuda
@@ -803,7 +701,6 @@ show_help() {
     echo "  restore <uri> <path> [banco]   Restaura backup (de um banco específico ou todos)"
     echo "  export <uri> [banco] [dir]    Realiza export JSON (de um banco específico ou todos)"
     echo "  import <uri> <path> [banco]   Importa arquivos JSON (de um banco específico ou todos)"
-    echo "  backup [opções]               Realiza backup e restore em um único comando"
     echo "  list                           Lista backups disponíveis com seus tamanhos"
     echo "  install-deps                   Instala dependências necessárias"
     echo
@@ -813,17 +710,8 @@ show_help() {
     echo "  dir                            Diretório de destino para o dump/export (opcional)"
     echo "  path                           Caminho do backup para restore/import"
     echo
-    echo "Opções para o comando backup:"
-    echo "  --source <uri>                 URI do banco de origem (opcional se MONGODB_SOURCE_URI estiver definido)"
-    echo "  --dest <uri>                   URI do banco de destino (opcional se MONGODB_DEST_URI estiver definido)"
-    echo "  --mode <dump|export>           Modo de backup (dump ou export, padrão: dump)"
-    echo "  --db <banco>                   Banco específico para backup/restore"
-    echo "  --db-mapping <map>             Mapeamento de nomes de bancos (formato: origem:destino,origem2:destino2)"
-    echo
     echo "Variáveis de ambiente:"
     echo "  BACKUP_DIR                     Diretório para armazenar backups (padrão: /tmp/mongodb_backups)"
-    echo "  MONGODB_SOURCE_URI             URI do banco de origem para o comando backup"
-    echo "  MONGODB_DEST_URI               URI do banco de destino para o comando backup"
     echo
     echo "Exemplos para MongoDB Atlas:"
     echo "  1. Dump de todos os bancos:"
@@ -881,40 +769,6 @@ show_help() {
     echo "  10. Instalar dependências:"
     echo "     opsmaster backup mongodb install-deps"
     echo
-    echo "Exemplos para backup/restore em um único comando:"
-    echo "  1. Usando variáveis de ambiente:"
-    echo "     export MONGODB_SOURCE_URI='mongodb+srv://usuario:senha@origem.mongodb.net'"
-    echo "     export MONGODB_DEST_URI='mongodb+srv://usuario:senha@destino.mongodb.net'"
-    echo "     opsmaster backup mongodb backup"
-    echo
-    echo "  2. Especificando URIs diretamente:"
-    echo "     opsmaster backup mongodb backup --source 'mongodb+srv://usuario:senha@origem.mongodb.net' \\"
-    echo "                                     --dest 'mongodb+srv://usuario:senha@destino.mongodb.net'"
-    echo
-    echo "  3. Backup de banco específico usando export:"
-    echo "     opsmaster backup mongodb backup --source 'mongodb://origem:27017' \\"
-    echo "                                     --dest 'mongodb://destino:27017' \\"
-    echo "                                     --mode export \\"
-    echo "                                     --db meudb"
-    echo
-    echo "  4. Backup com mapeamento de nomes de bancos:"
-    echo "     opsmaster backup mongodb backup --source 'mongodb://origem:27017' \\"
-    echo "                                     --dest 'mongodb://destino:27017' \\"
-    echo "                                     --db-mapping 'fabio:fabio-coelho,teste:teste-prod'"
-    echo
-    echo "Notas sobre diretórios e caminhos:"
-    echo "  1. Diretório de backup (dir):"
-    echo "     - Se não especificado, usa o valor de BACKUP_DIR"
-    echo "     - Pode ser um caminho absoluto ou relativo"
-    echo "     - Exemplo: '/caminho/para/backup' ou './backups'"
-    echo
-    echo "  2. Caminho do backup (path):"
-    echo "     - Para restore/import, pode ser:"
-    echo "       a) Nome do diretório de backup (ex: all_20240225_150226)"
-    echo "       b) Caminho absoluto (ex: /caminho/para/backup/all_20240225_150226)"
-    echo "     - Se for apenas o nome do diretório, será procurado em BACKUP_DIR"
-    echo "     - Se for caminho absoluto, será usado diretamente"
-    echo
     echo "Formatos de URI suportados:"
     echo "  MongoDB Atlas:"
     echo "    - mongodb+srv://usuario:senha@seu-cluster.mongodb.net"
@@ -941,8 +795,7 @@ main() {
     local action="$1"
     local uri="$2"
     local param3="$3"    # Banco ou caminho do backup
-    local param4="$4"    # Banco para restore/import ou diretório para dump/export
-    local param5="$5"    # Mapeamento de bancos
+    local param4="$4"    # Diretório para export
     
     case "$action" in
         dump)
@@ -959,7 +812,7 @@ main() {
                 show_help
                 exit 1
             fi
-            do_restore "$uri" "$param3" "$param4" "$param5"  # param4: banco (opcional), param5: mapeamento (opcional)
+            do_restore "$uri" "$param3" "$param4"  # param4 é opcional (nome do banco)
             ;;
         export)
             if [ -z "$uri" ]; then
@@ -967,7 +820,13 @@ main() {
                 show_help
                 exit 1
             fi
-            do_export "$uri" "$param3" "$param4"  # param3: banco (opcional), param4: diretório (opcional)
+            
+            # Se param4 é um caminho absoluto, é o diretório
+            if [[ "$param4" = /* ]]; then
+                do_export "$uri" "$param3" "$param4"  # param3: banco, param4: diretório
+            else
+                do_export "$uri" "$param3" ""  # param3: banco, sem diretório personalizado
+            fi
             ;;
         import)
             if [ -z "$uri" ] || [ -z "$param3" ]; then
@@ -975,53 +834,7 @@ main() {
                 show_help
                 exit 1
             fi
-            do_import "$uri" "$param3" "$param4" "$param5"  # param4: banco (opcional), param5: mapeamento (opcional)
-            ;;
-        backup)
-            local source_uri=""
-            local dest_uri=""
-            local mode="dump"
-            local db=""
-            local db_mapping=""
-            
-            # Processar argumentos
-            shift
-            while [ $# -gt 0 ]; do
-                case "$1" in
-                    --source)
-                        source_uri="$2"
-                        shift 2
-                        ;;
-                    --dest)
-                        dest_uri="$2"
-                        shift 2
-                        ;;
-                    --mode)
-                        if [ "$2" != "dump" ] && [ "$2" != "export" ]; then
-                            log_error "Modo inválido: $2"
-                            log_error "Use 'dump' ou 'export'"
-                            exit 1
-                        fi
-                        mode="$2"
-                        shift 2
-                        ;;
-                    --db)
-                        db="$2"
-                        shift 2
-                        ;;
-                    --db-mapping)
-                        db_mapping="$2"
-                        shift 2
-                        ;;
-                    *)
-                        log_error "Argumento desconhecido: $1"
-                        show_help
-                        exit 1
-                        ;;
-                esac
-            done
-            
-            do_backup_restore "$mode" "$source_uri" "$dest_uri" "$db" "$db_mapping"
+            do_import "$uri" "$param3" "$param4"  # param4 é opcional (nome do banco)
             ;;
         list)
             list_backups
