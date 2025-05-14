@@ -1050,23 +1050,32 @@ show_help() {
     echo "  MONGODB_SOURCE_URI            URI do MongoDB de origem (opcional)"
     echo "  MONGODB_TARGET_URI            URI do MongoDB de destino (opcional)"
     echo
-    echo "Exemplos usando variáveis de ambiente:"
+    echo "Exemplos:"
     echo "  1. Sincronizar via dump/restore:"
     echo "     export MONGODB_SOURCE_URI='mongodb://usuario:senha@servidor1:27017'"
     echo "     export MONGODB_TARGET_URI='mongodb://usuario:senha@servidor2:27017'"
-    echo "     opsmaster backup mongodb sync-dump catalog si-catalog-svc"
+    echo "     opsmaster backup mongodb sync-dump dummy dummy2"
     echo
     echo "  2. Sincronizar via export/import de collections:"
     echo "     export MONGODB_SOURCE_URI='mongodb://usuario:senha@servidor1:27017'"
     echo "     export MONGODB_TARGET_URI='mongodb://usuario:senha@servidor2:27017'"
-    echo "     opsmaster backup mongodb sync-collections catalog si-catalog-svc"
+    echo "     opsmaster backup mongodb sync-collections dummy dummy2"
+    echo
+    echo "  3. Dump de um banco específico:"
+    echo "     opsmaster backup mongodb dump 'mongodb://usuario:senha@servidor:27017' meudb"
+    echo
+    echo "  4. Restore de um banco específico com nome diferente:"
+    echo "     opsmaster backup mongodb restore 'mongodb://usuario:senha@servidor:27017' all_20240225_150226 catalog si-catalog-svc"
     echo
     echo "Notas importantes:"
-    echo "  - As URIs devem começar com mongodb:// ou mongodb+srv://"
-    echo "  - Para MongoDB Atlas, use o formato mongodb+srv://"
-    echo "  - Para MongoDB local/remoto, use o formato mongodb://"
+    echo "  - Para MongoDB Atlas, use o formato mongodb+srv:// (ex: mongodb+srv://usuario:senha@seu-cluster.mongodb.net)"
+    echo "  - Para MongoDB local/remoto, use o formato mongodb:// (ex: mongodb://usuario:senha@servidor:27017)"
     echo "  - Certifique-se de que as variáveis de ambiente estão definidas corretamente"
     echo "  - Use aspas ao definir as variáveis de ambiente: export MONGODB_SOURCE_URI='mongodb://...'"
+    echo "  - Os backups são salvos em diretórios com o formato: <banco>_<data>_<hora>"
+    echo "  - Para backups completos, usa-se o prefixo 'all' no nome do diretório"
+    echo "  - Para MongoDB Atlas, é necessário ter o IP do servidor liberado no firewall"
+    echo "  - Para MongoDB Atlas, o pacote dnspython é instalado automaticamente"
     echo
 }
 
