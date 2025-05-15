@@ -900,7 +900,20 @@ do_sync_dump() {
     
     # Verificar dependências antes de prosseguir
     check_mongodb_deps
-    
+
+    # Testar conexão com origem/destino
+    log_info "Testando conexão com MongoDB de origem..."
+    if ! test_mongodb_connection "$source_uri"; then
+        log_error "Falha ao conectar com MongoDB de origem"
+        exit 1
+    elif ! (log_info "Testando conexão com MongoDB de destino..." && test_mongodb_connection "$target_uri"); then
+        log_error "Falha ao conectar com MongoDB de destino"
+        exit 1
+    fi
+
+    # O script continua aqui apenas se ambas as conexões foram bem-sucedidas.
+    log_info "Ambas as conexões MongoDB foram bem-sucedidas."
+
     # Verificar permissões na origem
     log_info "Verificando permissões no MongoDB de origem..."
     if ! check_mongodb_permissions "$source_uri"; then
@@ -971,6 +984,19 @@ do_sync_collections() {
     
     # Verificar dependências antes de prosseguir
     check_mongodb_deps
+
+    # Testar conexão com origem/destino
+    log_info "Testando conexão com MongoDB de origem..."
+    if ! test_mongodb_connection "$source_uri"; then
+        log_error "Falha ao conectar com MongoDB de origem"
+        exit 1
+    elif ! (log_info "Testando conexão com MongoDB de destino..." && test_mongodb_connection "$target_uri"); then
+        log_error "Falha ao conectar com MongoDB de destino"
+        exit 1
+    fi
+
+    # O script continua aqui apenas se ambas as conexões foram bem-sucedidas.
+    log_info "Ambas as conexões MongoDB foram bem-sucedidas."
     
     # Verificar permissões na origem
     log_info "Verificando permissões no MongoDB de origem..."
