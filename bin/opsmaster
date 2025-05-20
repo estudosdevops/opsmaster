@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 
 # Definindo o diretório base do projeto
+# shellcheck disable=SC2034
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Importando bibliotecas compartilhadas
+# shellcheck disable=SC1091
 source "/usr/local/lib/opsmaster/common.sh"
 
 # Versão do OPSMaster
-VERSION="0.1.0"
+VERSION="0.2.0"
 
 # Função para listar scripts de uma categoria
 list_category_scripts() {
