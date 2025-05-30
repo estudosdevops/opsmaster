@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "/usr/local/lib/opsmaster/common.sh"
 
 # Versão do OPSMaster
-VERSION="0.2.0"
+VERSION="0.3.0"
 
 # Função para listar scripts de uma categoria
 list_category_scripts() {
