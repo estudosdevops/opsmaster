@@ -1,0 +1,13 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: opsmaster_dev
+    volumes:
+      - .:/workspace
+    network_mode: host
+
+volumes:
+  postgres_source_data:
+  postgres_target_data: 

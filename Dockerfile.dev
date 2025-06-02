@@ -1,0 +1,23 @@
+FROM ubuntu:22.04
+
+# Evitar interações durante a instalação
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Instalar apenas ferramentas básicas
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configurar o ambiente de trabalho
+WORKDIR /workspace
+
+# Copiar o projeto
+COPY . /workspace/
+
+# Garantir que o script tem permissão de execução
+RUN chmod +x /workspace/scripts/backup/postgresql.sh
+
+# Comando padrão para manter o container rodando
+CMD ["sleep", "infinity"] 
