@@ -1,43 +1,29 @@
-version: '3.8'
-
 services:
   postgres_source:
     image: postgres:15
     container_name: postgres_source
     environment:
-      POSTGRES_DB: sourcedb
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: sourcepass123
-      POSTGRES_SUPERUSER_PASSWORD: sourceadmin123
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: sourcedb
     ports:
       - "5432:5432"
     volumes:
       - postgres_source_data:/var/lib/postgresql/data
-      - ./init-scripts:/docker-entrypoint-initdb.d
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      - ./init-scripts/init-data.sql:/docker-entrypoint-initdb.d/01-init-data.sql
 
   postgres_target:
     image: postgres:15
     container_name: postgres_target
     environment:
-      POSTGRES_DB: targetdb
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: targetpass123
-      POSTGRES_SUPERUSER_PASSWORD: targetadmin123
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: targetdb
     ports:
       - "5433:5432"
     volumes:
       - postgres_target_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
 
 volumes:
   postgres_source_data:
-  postgres_target_data: 
+  postgres_target_data:
