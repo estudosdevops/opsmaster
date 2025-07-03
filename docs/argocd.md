@@ -1,4 +1,4 @@
-# Comando argocd
+# Comandos argocd
 
 Este documento detalha o uso dos subcomandos do grupo opsmaster argocd.
 

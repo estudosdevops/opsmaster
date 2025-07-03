@@ -97,3 +97,33 @@ func CreateApplication(ctx context.Context, serverAddr, authToken string, insecu
 
 	return nil
 }
+
+// DeleteApplication apaga uma aplicação específica no Argo CD.
+func DeleteApplication(ctx context.Context, serverAddr, authToken string, insecure bool, appName string) error {
+	// 1. Usa nosso helper para obter o cliente principal.
+	apiClient, err := NewClient(serverAddr, authToken, insecure)
+	if err != nil {
+		return err
+	}
+
+	// 2. Obtém o cliente de serviço específico para "aplicações" e seu closer.
+	appServiceCloser, appServiceClient, err := apiClient.NewApplicationClient()
+	if err != nil {
+		return fmt.Errorf("falha ao obter o cliente de aplicação: %w", err)
+	}
+	defer appServiceCloser.Close()
+
+	// 3. Cria a requisição para deletar a aplicação.
+	deleteRequest := application.ApplicationDeleteRequest{
+		Name: &appName,
+	}
+	_, err = appServiceClient.Delete(ctx, &deleteRequest)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return nil
+		}
+		return fmt.Errorf("falha ao deletar a aplicação '%s': %w", appName, err)
+	}
+
+	return nil
+}
