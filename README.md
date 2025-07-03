@@ -28,7 +28,7 @@ go install github.com/estudosdevops/opsmaster@latest
 
 📚 Documentação dos Comandos:
 
-A documentação detalhada, com todas as flags e exemplos de uso para cada comando, pode ser encontrada na pasta docs/:
+A documentação detalhada, com todas as flags e exemplos de uso para cada comando, [pode ser encontrada na pasta docs](./docs)
 
 🚀 Exemplo Rápido
 
