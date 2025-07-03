@@ -1,4 +1,4 @@
-# Comando get
+# Comandos get
 
 Este documento detalha o uso dos subcomandos do grupo opsmaster get.
 

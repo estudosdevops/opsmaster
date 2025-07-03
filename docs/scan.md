@@ -1,4 +1,4 @@
-# Comando scan
+# Comandos scan
 
 Este documento detalha o uso dos subcomandos do grupo opsmaster scan.
 
