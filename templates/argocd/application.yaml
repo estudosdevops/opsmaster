@@ -1,0 +1,42 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  # O nome da aplicação no Argo CD será preenchido pelo values.yaml
+  name: {{ .metadata.name }}
+  namespace: argocd
+spec:
+  # O projeto do Argo CD virá do values.yaml, com "default" como fallback.
+  project: {{ .spec.project | default "default" }}
+
+  source:
+    # O repositório dos seus Helm Charts ou manifestos K8s.
+    repoURL: {{ .spec.source.repoURL }}
+    # A branch ou tag do Git a ser usada.
+    targetRevision: {{ .spec.source.targetRevision }}
+    # O caminho para o chart/manifesto dentro do repositório.
+    path: {{ .spec.source.path }}
+
+    # Seção específica para Helm.
+    helm:
+      # Os parâmetros do Helm que serão passados para o 'helm template'.
+      # Note que a tag da imagem é preenchida aqui.
+      parameters:
+      {{- range .spec.source.helm.parameters }}
+      - name: {{ .name | quote }}
+        value: {{ .value | quote }}
+      {{- end }}
+
+  # Define onde a aplicação será implantada no cluster Kubernetes.
+  destination:
+    server: https://kubernetes.default.svc
+    # O namespace de destino virá do values.yaml.
+    namespace: {{ .spec.destination.namespace }}
+
+  # Política de sincronização padrão.
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
