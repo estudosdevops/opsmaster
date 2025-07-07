@@ -62,7 +62,6 @@ var appGetCmd = &cobra.Command{
 			var resourcesRows [][]string
 			for _, res := range app.Status.Resources {
 				healthMsg := ""
-				// CORREÇÃO: Lógica para exibir "OK" quando o recurso está saudável.
 				if res.Health != nil {
 					if res.Health.Status == "Healthy" && res.Health.Message == "" {
 						healthMsg = "OK"
