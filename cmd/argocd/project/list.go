@@ -33,7 +33,6 @@ var projectListCmd = &cobra.Command{
 			log.Info("Buscando projeto específico...", "projeto", projectName)
 			var project *v1alpha1.AppProject
 			project, err = argocd.GetProject(ctx, serverAddr, authToken, insecure, projectName)
-			// CORREÇÃO: Trata o erro imediatamente. Se não houver erro, adiciona o projeto à lista.
 			if err != nil {
 				log.Error("Falha ao buscar o projeto", "erro", err)
 				return err

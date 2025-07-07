@@ -9,6 +9,8 @@ import (
 	"github.com/estudosdevops/opsmaster/internal/logger"
 
 	"github.com/argoproj/argo-cd/v2/pkg/apiclient/application"
+	"github.com/argoproj/argo-cd/v2/pkg/apiclient/project"
+	"github.com/argoproj/argo-cd/v2/pkg/apiclient/repository"
 	"github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 )
 
@@ -106,4 +108,86 @@ func WaitForAppStatus(ctx context.Context, serverAddr, authToken string, insecur
 			}
 		}
 	}
+}
+
+// --- Funções de Projeto ---
+// GetProject busca um projeto específico pelo nome.
+func GetProject(ctx context.Context, serverAddr, authToken string, insecure bool, projName string) (*v1alpha1.AppProject, error) {
+	apiClient, err := NewClient(serverAddr, authToken, insecure)
+	if err != nil {
+		return nil, err
+	}
+	projServiceCloser, projServiceClient, err := apiClient.NewProjectClient()
+	if err != nil {
+		return nil, fmt.Errorf("falha ao obter o cliente de projeto: %w", err)
+	}
+	defer projServiceCloser.Close()
+
+	p, err := projServiceClient.Get(ctx, &project.ProjectQuery{Name: projName})
+	if err != nil {
+		return nil, fmt.Errorf("falha ao buscar o projeto '%s': %w", projName, err)
+	}
+	return p, nil
+}
+
+// ListProjects busca todos os projetos registrados no Argo CD.
+func ListProjects(ctx context.Context, serverAddr, authToken string, insecure bool) ([]v1alpha1.AppProject, error) {
+	apiClient, err := NewClient(serverAddr, authToken, insecure)
+	if err != nil {
+		return nil, err
+	}
+	projServiceCloser, projServiceClient, err := apiClient.NewProjectClient()
+	if err != nil {
+		return nil, fmt.Errorf("falha ao obter o cliente de projeto: %w", err)
+	}
+	defer projServiceCloser.Close()
+
+	projectList, err := projServiceClient.List(ctx, &project.ProjectQuery{})
+	if err != nil {
+		return nil, fmt.Errorf("falha ao listar os projetos: %w", err)
+	}
+	return projectList.Items, nil
+}
+
+// GetRepository busca um repositório específico pela URL.
+func GetRepository(ctx context.Context, serverAddr, authToken string, insecure bool, repoURL string) (*v1alpha1.Repository, error) {
+	apiClient, err := NewClient(serverAddr, authToken, insecure)
+	if err != nil {
+		return nil, err
+	}
+	repoServiceCloser, repoServiceClient, err := apiClient.NewRepoClient()
+	if err != nil {
+		return nil, fmt.Errorf("falha ao obter o cliente de repositório: %w", err)
+	}
+	defer repoServiceCloser.Close()
+
+	repo, err := repoServiceClient.Get(ctx, &repository.RepoQuery{Repo: repoURL})
+	if err != nil {
+		return nil, fmt.Errorf("falha ao buscar o repositório '%s': %w", repoURL, err)
+	}
+	return repo, nil
+}
+
+// ListRepositories busca todos os repositórios registrados no Argo CD.
+func ListRepositories(ctx context.Context, serverAddr, authToken string, insecure bool) ([]v1alpha1.Repository, error) {
+	apiClient, err := NewClient(serverAddr, authToken, insecure)
+	if err != nil {
+		return nil, err
+	}
+	repoServiceCloser, repoServiceClient, err := apiClient.NewRepoClient()
+	if err != nil {
+		return nil, fmt.Errorf("falha ao obter o cliente de repositório: %w", err)
+	}
+	defer repoServiceCloser.Close()
+
+	repoList, err := repoServiceClient.List(ctx, &repository.RepoQuery{})
+	if err != nil {
+		return nil, fmt.Errorf("falha ao listar os repositórios: %w", err)
+	}
+
+	repos := make([]v1alpha1.Repository, len(repoList.Items))
+	for i, item := range repoList.Items {
+		repos[i] = *item
+	}
+	return repos, nil
 }
