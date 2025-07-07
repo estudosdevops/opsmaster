@@ -47,7 +47,6 @@ var appCreateCmd = &cobra.Command{
 }
 
 func init() {
-	AppCmd.AddCommand(appCreateCmd)
 	appCreateCmd.Flags().String("app-name", "", "Nome da aplicação no Argo CD (obrigatório)")
 	appCreateCmd.Flags().String("project", "default", "Projeto do Argo CD ao qual a aplicação pertencerá")
 	appCreateCmd.Flags().String("dest-namespace", "", "Namespace de destino no Kubernetes (obrigatório)")

@@ -38,8 +38,3 @@ var appDeleteCmd = &cobra.Command{
 		return nil
 	},
 }
-
-func init() {
-	// Adiciona o comando 'delete' como um subcomando do 'app'.
-	AppCmd.AddCommand(appDeleteCmd)
-}
