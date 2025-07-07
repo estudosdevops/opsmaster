@@ -56,8 +56,8 @@ step "Aguardando a aplicação ficar saudável e sincronizada"
 $OPSMASTER_BIN --context $ARGO_CONTEXT argocd app wait "$APP_NAME" --timeout 1m
 sleep 5s
 
-step "Listando e confirmando o status da aplicação"
-$OPSMASTER_BIN --context $ARGO_CONTEXT argocd app list "$APP_NAME"
+step "Buscando detalhes da aplicação"
+$OPSMASTER_BIN --context $ARGO_CONTEXT argocd app get "$APP_NAME"
 
 echo -e "\n\e[1;32m✅ Teste de deploy concluído com sucesso! A aplicação está no ar.\e[0m"
 # shellcheck disable=SC2162
