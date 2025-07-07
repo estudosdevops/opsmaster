@@ -24,8 +24,10 @@ type AppStatusInfo struct {
 }
 
 // --- Funções de Aplicação ---
-// GetApplication busca o estado atual de uma aplicação específica.
-func GetApplication(ctx context.Context, serverAddr, authToken string, insecure bool, appName string) (*AppStatusInfo, error) {
+
+// GetApplicationDetails busca o objeto completo de uma aplicação.
+// Esta é agora a nossa função "base" para buscar uma aplicação.
+func GetApplicationDetails(ctx context.Context, serverAddr, authToken string, insecure bool, appName string) (*v1alpha1.Application, error) {
 	apiClient, err := NewClient(serverAddr, authToken, insecure)
 	if err != nil {
 		return nil, err
@@ -37,17 +39,30 @@ func GetApplication(ctx context.Context, serverAddr, authToken string, insecure 
 	}
 	defer appServiceCloser.Close()
 
+	// A função Get da API já retorna o objeto completo da aplicação.
 	app, err := appServiceClient.Get(ctx, &application.ApplicationQuery{Name: &appName})
 	if err != nil {
 		return nil, fmt.Errorf("falha ao buscar a aplicação '%s': %w", appName, err)
 	}
 
+	return app, nil
+}
+
+// GetApplication busca e transforma o estado de uma aplicação para um formato simplificado.
+func GetApplication(ctx context.Context, serverAddr, authToken string, insecure bool, appName string) (*AppStatusInfo, error) {
+	// Reutiliza a nossa função base para buscar os detalhes completos.
+	app, err := GetApplicationDetails(ctx, serverAddr, authToken, insecure, appName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Transforma o objeto completo na nossa struct simplificada.
 	return &AppStatusInfo{
 		Name:         app.Name,
 		Project:      app.Spec.Project,
 		SyncStatus:   app.Status.Sync.Status,
 		HealthStatus: app.Status.Health,
-		RepoURL:      app.Spec.Source.RepoURL, // Coleta a URL do repositório.
+		RepoURL:      app.Spec.Source.RepoURL,
 	}, nil
 }
 
@@ -112,6 +127,7 @@ func WaitForAppStatus(ctx context.Context, serverAddr, authToken string, insecur
 }
 
 // --- Funções de Projeto ---
+
 // GetProject busca um projeto específico pelo nome.
 func GetProject(ctx context.Context, serverAddr, authToken string, insecure bool, projName string) (*v1alpha1.AppProject, error) {
 	apiClient, err := NewClient(serverAddr, authToken, insecure)

@@ -22,4 +22,5 @@ func init() {
 	AppCmd.AddCommand(appWaitCmd)
 	AppCmd.AddCommand(appDeleteCmd)
 	AppCmd.AddCommand(appSyncCmd)
+	AppCmd.AddCommand(appGetCmd)
 }
