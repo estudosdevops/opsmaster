@@ -23,7 +23,7 @@ type AppStatusInfo struct {
 	RepoURL      string
 }
 
-// --- Funções de Repositório ---
+// --- Funções de Aplicação ---
 // GetApplication busca o estado atual de uma aplicação específica.
 func GetApplication(ctx context.Context, serverAddr, authToken string, insecure bool, appName string) (*AppStatusInfo, error) {
 	apiClient, err := NewClient(serverAddr, authToken, insecure)
