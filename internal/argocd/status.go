@@ -23,6 +23,7 @@ type AppStatusInfo struct {
 	RepoURL      string
 }
 
+// --- Funções de Repositório ---
 // GetApplication busca o estado atual de uma aplicação específica.
 func GetApplication(ctx context.Context, serverAddr, authToken string, insecure bool, appName string) (*AppStatusInfo, error) {
 	apiClient, err := NewClient(serverAddr, authToken, insecure)
@@ -149,6 +150,7 @@ func ListProjects(ctx context.Context, serverAddr, authToken string, insecure bo
 	return projectList.Items, nil
 }
 
+// --- Funções de Repositório ---
 // GetRepository busca um repositório específico pela URL.
 func GetRepository(ctx context.Context, serverAddr, authToken string, insecure bool, repoURL string) (*v1alpha1.Repository, error) {
 	apiClient, err := NewClient(serverAddr, authToken, insecure)
