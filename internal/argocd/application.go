@@ -14,16 +14,17 @@ import (
 
 // AppOptions contém todos os parâmetros necessários para criar uma aplicação.
 type AppOptions struct {
-	AppName        string
-	Project        string
-	DestinationNS  string
-	RepoURL        string
-	RepoPath       string
-	TargetRevision string
-	ValuesFile     string
-	ImageRepo      string
-	ImageTag       string
-	DependencyName string
+	AppName           string
+	Project           string
+	DestinationNS     string
+	DestinationServer string
+	RepoURL           string
+	RepoPath          string
+	TargetRevision    string
+	ValuesFile        string
+	ImageRepo         string
+	ImageTag          string
+	DependencyName    string
 }
 
 // CreateApplication constrói um objeto Application programaticamente e o envia para a API do Argo CD.
@@ -66,7 +67,7 @@ func CreateApplication(ctx context.Context, serverAddr, authToken string, insecu
 				},
 			},
 			Destination: v1alpha1.ApplicationDestination{
-				Server:    "https://kubernetes.default.svc",
+				Server:    opts.DestinationServer,
 				Namespace: opts.DestinationNS,
 			},
 			SyncPolicy: &v1alpha1.SyncPolicy{
@@ -123,6 +124,45 @@ func DeleteApplication(ctx context.Context, serverAddr, authToken string, insecu
 			return nil
 		}
 		return fmt.Errorf("falha ao deletar a aplicação '%s': %w", appName, err)
+	}
+
+	return nil
+}
+
+// SyncApplication força a sincronização de uma aplicação específica.
+// Se 'force' for true, a sincronização incluirá prune e replace.
+func SyncApplication(ctx context.Context, serverAddr, authToken string, insecure bool, appName string, force bool) error {
+	// 1. Usa nosso helper para obter o cliente principal.
+	apiClient, err := NewClient(serverAddr, authToken, insecure)
+	if err != nil {
+		return err
+	}
+
+	// 2. Obtém o cliente de serviço específico para "aplicações" e seu closer.
+	appServiceCloser, appServiceClient, err := apiClient.NewApplicationClient()
+	if err != nil {
+		return fmt.Errorf("falha ao obter o cliente de aplicação: %w", err)
+	}
+	defer appServiceCloser.Close()
+
+	// 3. Cria a requisição para sincronizar a aplicação.
+	syncRequest := application.ApplicationSyncRequest{
+		Name: &appName,
+	}
+
+	// Se a flag --force for usada, adiciona as opções de sincronização forçada.
+	if force {
+		prune := true
+		syncRequest.Prune = &prune
+		syncRequest.SyncOptions = &application.SyncOptions{
+			Items: []string{"Replace=true"},
+		}
+	}
+
+	// 4. Envia a requisição para sincronizar a aplicação.
+	_, err = appServiceClient.Sync(ctx, &syncRequest)
+	if err != nil {
+		return fmt.Errorf("falha ao sincronizar a aplicação '%s': %w", appName, err)
 	}
 
 	return nil

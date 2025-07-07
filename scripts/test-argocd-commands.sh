@@ -49,6 +49,9 @@ $OPSMASTER_BIN --context $ARGO_CONTEXT argocd app create \
     --set-chart-dependency "$CHART_DEPENDENCY"
 sleep 5s
 
+step "Sincronizando a aplicação"
+$OPSMASTER_BIN argocd app sync "$APP_NAME"
+
 step "Aguardando a aplicação ficar saudável e sincronizada"
 $OPSMASTER_BIN --context $ARGO_CONTEXT argocd app wait "$APP_NAME" --timeout 1m
 sleep 5s

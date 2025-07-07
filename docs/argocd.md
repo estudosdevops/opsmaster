@@ -53,6 +53,9 @@ opsmaster argocd repo add https://github.com/sua-empresa/meu-servico.git
 # Cria um novo projeto
 opsmaster argocd project create meu-projeto-staging --description "Projeto para Staging"
 
+# Força a sincronização de uma aplicação
+opsmaster argocd app sync meu-servico-stg
+
 # Apaga uma aplicação
 opsmaster argocd app delete meu-servico-stg
 
@@ -66,6 +69,7 @@ opsmaster argocd repo delete https://github.com/sua-empresa/meu-servico.git
 Para o fluxo completo de deploy de uma nova aplicação com o comando app create, consulte a documentação de referência abaixo.
 
 📖 Referência de Comandos
+
 ## Comandos `repo`
 
 - opsmaster argocd repo add <url-do-repositorio>
@@ -103,6 +107,10 @@ Para o fluxo completo de deploy de uma nova aplicação com o comando app create
 - opsmaster argocd app list [nome-da-aplicacao]
 
   Exibe uma tabela com todas as aplicações ou os detalhes de uma aplicação específica.
+
+- opsmaster argocd app sync <nome-da-aplicacao>
+  
+  Inicia uma sincronização imediata para uma aplicação. Use a flag --force para substituir recursos e apagar os que não existem mais no Git
 
 - opsmaster argocd app wait <nome-da-aplicacao>
 

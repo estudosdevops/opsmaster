@@ -21,16 +21,17 @@ var appCreateCmd = &cobra.Command{
 		insecure, _ := cmd.Flags().GetBool("insecure")
 
 		appOpts := argocd.AppOptions{
-			AppName:        cmd.Flag("app-name").Value.String(),
-			Project:        cmd.Flag("project").Value.String(),
-			DestinationNS:  cmd.Flag("dest-namespace").Value.String(),
-			RepoURL:        cmd.Flag("repo-url").Value.String(),
-			RepoPath:       cmd.Flag("repo-path").Value.String(),
-			TargetRevision: cmd.Flag("target-revision").Value.String(),
-			ValuesFile:     cmd.Flag("values").Value.String(),
-			ImageRepo:      cmd.Flag("set-image-repo").Value.String(),
-			ImageTag:       cmd.Flag("set-image-tag").Value.String(),
-			DependencyName: cmd.Flag("set-chart-dependency").Value.String(),
+			AppName:           cmd.Flag("app-name").Value.String(),
+			Project:           cmd.Flag("project").Value.String(),
+			DestinationNS:     cmd.Flag("dest-namespace").Value.String(),
+			DestinationServer: cmd.Flag("dest-server").Value.String(),
+			RepoURL:           cmd.Flag("repo-url").Value.String(),
+			RepoPath:          cmd.Flag("repo-path").Value.String(),
+			TargetRevision:    cmd.Flag("target-revision").Value.String(),
+			ValuesFile:        cmd.Flag("values").Value.String(),
+			ImageRepo:         cmd.Flag("set-image-repo").Value.String(),
+			ImageTag:          cmd.Flag("set-image-tag").Value.String(),
+			DependencyName:    cmd.Flag("set-chart-dependency").Value.String(),
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -57,7 +58,9 @@ func init() {
 	appCreateCmd.Flags().String("set-image-repo", "", "Define o nome do repositório da imagem (obrigatório)")
 	appCreateCmd.Flags().String("set-image-tag", "", "Define a tag da imagem a ser usada no deploy (obrigatório)")
 	appCreateCmd.Flags().String("set-chart-dependency", "generic-app", "Nome da dependência do chart no Chart.yaml")
+	appCreateCmd.Flags().String("dest-server", "https://kubernetes.default.svc", "Endereço do cluster Kubernetes de destino")
 
+	// Marca as flags mais importantes como obrigatórias.
 	appCreateCmd.MarkFlagRequired("app-name")
 	appCreateCmd.MarkFlagRequired("dest-namespace")
 	appCreateCmd.MarkFlagRequired("repo-url")
