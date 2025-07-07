@@ -67,6 +67,10 @@ opsmaster argocd app create \
     --set-chart-dependency "generic-app"
 ```
 
+## Nota sobre Ambientes
+
+A flag `--target-revision` (que por padrão é HEAD) é usada para apontar para diferentes versões do seu código. É uma prática comum usar uma branch para ambientes de desenvolvimento/staging (ex: `--target-revision "develop"`) e uma tag Git para ambientes de produção (ex: `--target-revision "v1.2.3"`).
+
 4. Aguardar o Deploy Ficar Pronto
 Use o comando wait para pausar a sua pipeline até que a aplicação esteja saudável e sincronizada.
 
@@ -79,4 +83,18 @@ Finalmente, use o comando list para obter um relatório final do status da sua a
 
 ```bash
 opsmaster argocd app list meu-servico-stg
+```
+
+6. Limpeza Completa
+Após os testes, você pode usar os comandos `delete` para limpar completamente o ambiente.
+
+```bash
+# Apaga a aplicação
+opsmaster argocd app delete meu-servico-stg
+
+# Apaga o projeto (após a aplicação ser removida)
+opsmaster argocd project delete meu-projeto-staging
+
+# Apaga o registro do repositório
+opsmaster argocd repo delete https://github.com/sua-empresa/meu-servico.git
 ```
