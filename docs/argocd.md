@@ -29,54 +29,85 @@ contexts:
 
 Você também pode passar as flags `--server,` `--token` e `--insecure` diretamente na linha de comando para sobrescrever o arquivo de configuração.
 
-🚀 Fluxo de Deploy Completo (Exemplo)
+🚀 Exemplos de Uso
+A seguir, exemplos de como usar os comandos mais comuns.
 
-Este é o fluxo completo para implantar um novo serviço usando o OpsMaster.
+## Explorando Comandos
 
-1. Adicionar o Repositório do Serviço
-Primeiro, se o repositório do seu serviço for privado, você precisa registrá-lo no Argo CD.
-
-```bash
-opsmaster argocd repo add https://github.com/sua-empresa/meu-servico.git \
-    --username seu-user \
-    --password $GIT_TOKEN
-```
-
-2. Criar o Projeto
-Em seguida, crie um projeto no Argo CD para agrupar suas aplicações. Este projeto deve ter permissão para usar o repositório que você adicionou.
+Para mais informações, exemplos e todas as flags disponíveis para um comando específico, use a flag `--help`
 
 ```bash
-opsmaster argocd project create meu-projeto-staging \
-    --description "Projeto para o ambiente de Staging" \
-    --source-repo "https://github.com/sua-empresa/meu-servico.git"
+# Exemplo: Ver todas as opções para o comando 'app list'
+opsmaster argocd app list --help
+
+# Exemplo: Ver todas as opções para o comando 'project create'
+opsmaster argocd project create --help
 ```
 
-3. Criar a Aplicação (O Deploy)
-Com o repositório e o projeto prontos, você pode criar a Application. Este comando aponta para o repositório do seu serviço e usa um values.yaml específico para o ambiente.
+## Criando e Removendo Recursos
 
 ```bash
-opsmaster argocd app create \
-    --app-name "meu-servico-stg" \
-    --project "meu-projeto-staging" \
-    --dest-namespace "staging" \
-    --repo-url "https://github.com/sua-empresa/meu-servico.git" \
-    --repo-path "chart" \
-    --values "values-stg.yaml" \
-    --set-image-repo "meu-registro/meu-servico" \
-    --set-image-tag "v1.2.3" \
-    --set-chart-dependency "generic-app"
+# Adiciona um novo repositório Git
+opsmaster argocd repo add https://github.com/sua-empresa/meu-servico.git
+
+# Cria um novo projeto
+opsmaster argocd project create meu-projeto-staging --description "Projeto para Staging"
+
+# Apaga uma aplicação
+opsmaster argocd app delete meu-servico-stg
+
+# Apaga um projeto
+opsmaster argocd project delete meu-projeto-staging
+
+# Apaga um repositório
+opsmaster argocd repo delete https://github.com/sua-empresa/meu-servico.git
 ```
 
-4. Aguardar o Deploy Ficar Pronto
-Use o comando wait para pausar a sua pipeline até que a aplicação esteja saudável e sincronizada.
+Para o fluxo completo de deploy de uma nova aplicação com o comando app create, consulte a documentação de referência abaixo.
 
-```bash
-opsmaster argocd app wait meu-servico-stg
-```
+📖 Referência de Comandos
+## Comandos `repo`
 
-5. Listar e Confirmar o Status
-Finalmente, use o comando list para obter um relatório final do status da sua aplicação.
+- opsmaster argocd repo add <url-do-repositorio>
 
-```bash
-opsmaster argocd app list meu-servico-stg
-```
+  Registra um novo repositório Git no Argo CD. Use as flags --username e --password para repositórios privados.
+
+- opsmaster argocd repo list
+
+  Exibe uma tabela com todos os repositórios Git registrados no Argo CD.
+
+- opsmaster argocd repo delete <url-do-repositorio>
+
+  Remove o registro de um repositório do Argo CD.
+
+## Comandos `project`
+
+- opsmaster argocd project create <nome-do-projeto>
+
+  Cria um novo AppProject no Argo CD. Use --description para adicionar uma descrição e --source-repo para permitir repositórios de origem.
+
+- opsmaster argocd project list [nome-do-projeto]
+
+  Exibe uma tabela com todos os projetos ou os detalhes de um projeto específico.
+
+- opsmaster argocd project delete <nome-do-projeto>
+
+  Apaga um projeto do Argo CD. Apenas funciona se não houver aplicações associadas a ele.
+
+## Comandos `app`
+
+- opsmaster argocd app create
+
+  Cria ou atualiza uma aplicação. Este comando possui várias flags para especificar os detalhes do deploy. Use ... app create --help para ver todas as opções.
+
+- opsmaster argocd app list [nome-da-aplicacao]
+
+  Exibe uma tabela com todas as aplicações ou os detalhes de uma aplicação específica.
+
+- opsmaster argocd app wait <nome-da-aplicacao>
+
+  Pausa a execução e aguarda até que uma aplicação atinja o estado Healthy e Synced. Muito útil para pipelines.
+
+- opsmaster argocd app delete <nome-da-aplicacao>
+
+  Apaga uma aplicação do Argo CD.

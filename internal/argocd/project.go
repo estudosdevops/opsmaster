@@ -56,3 +56,63 @@ func CreateProject(ctx context.Context, serverAddr, authToken string, insecure b
 
 	return nil
 }
+
+// DeleteProject apaga um projeto específico no Argo CD.
+func DeleteProject(ctx context.Context, serverAddr, authToken string, insecure bool, projName string) error {
+	apiClient, err := NewClient(serverAddr, authToken, insecure)
+	if err != nil {
+		return err
+	}
+	projServiceCloser, projServiceClient, err := apiClient.NewProjectClient()
+	if err != nil {
+		return fmt.Errorf("falha ao obter o cliente de projeto: %w", err)
+	}
+	defer projServiceCloser.Close()
+
+	_, err = projServiceClient.Delete(ctx, &project.ProjectQuery{Name: projName})
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return nil
+		}
+		return fmt.Errorf("falha ao apagar o projeto '%s': %w", projName, err)
+	}
+	return nil
+}
+
+// GetProject busca um projeto específico pelo nome.
+func GetProject(ctx context.Context, serverAddr, authToken string, insecure bool, projName string) (*v1alpha1.AppProject, error) {
+	apiClient, err := NewClient(serverAddr, authToken, insecure)
+	if err != nil {
+		return nil, err
+	}
+	projServiceCloser, projServiceClient, err := apiClient.NewProjectClient()
+	if err != nil {
+		return nil, fmt.Errorf("falha ao obter o cliente de projeto: %w", err)
+	}
+	defer projServiceCloser.Close()
+
+	p, err := projServiceClient.Get(ctx, &project.ProjectQuery{Name: projName})
+	if err != nil {
+		return nil, fmt.Errorf("falha ao buscar o projeto '%s': %w", projName, err)
+	}
+	return p, nil
+}
+
+// ListProjects busca todos os projetos registrados no Argo CD.
+func ListProjects(ctx context.Context, serverAddr, authToken string, insecure bool) ([]v1alpha1.AppProject, error) {
+	apiClient, err := NewClient(serverAddr, authToken, insecure)
+	if err != nil {
+		return nil, err
+	}
+	projServiceCloser, projServiceClient, err := apiClient.NewProjectClient()
+	if err != nil {
+		return nil, fmt.Errorf("falha ao obter o cliente de projeto: %w", err)
+	}
+	defer projServiceCloser.Close()
+
+	projectList, err := projServiceClient.List(ctx, &project.ProjectQuery{})
+	if err != nil {
+		return nil, fmt.Errorf("falha ao listar os projetos: %w", err)
+	}
+	return projectList.Items, nil
+}

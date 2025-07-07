@@ -17,4 +17,6 @@ var RepoCmd = &cobra.Command{
 
 func init() {
 	RepoCmd.AddCommand(repoAddCmd)
+	RepoCmd.AddCommand(repoDeleteCmd)
+	RepoCmd.AddCommand(repoListCmd)
 }

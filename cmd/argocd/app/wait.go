@@ -41,7 +41,6 @@ var appWaitCmd = &cobra.Command{
 }
 
 func init() {
-	AppCmd.AddCommand(appWaitCmd)
 	appWaitCmd.Flags().DurationVarP(&waitTimeout, "timeout", "t", 5*time.Minute, "Tempo máximo de espera pela aplicação")
 	appWaitCmd.Flags().DurationVarP(&waitInterval, "interval", "i", 15*time.Second, "Intervalo entre as verificações de status")
 }

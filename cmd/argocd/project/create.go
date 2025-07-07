@@ -47,7 +47,6 @@ var projectCreateCmd = &cobra.Command{
 }
 
 func init() {
-	ProjectCmd.AddCommand(projectCreateCmd)
 	projectCreateCmd.Flags().StringVarP(&projDescription, "description", "d", "", "Descrição do projeto")
 	projectCreateCmd.Flags().StringSliceVarP(&sourceRepos, "source-repo", "s", []string{"*"}, "Repositório Git permitido para este projeto")
 }

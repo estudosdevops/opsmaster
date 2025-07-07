@@ -17,4 +17,6 @@ var ProjectCmd = &cobra.Command{
 
 func init() {
 	ProjectCmd.AddCommand(projectCreateCmd)
+	ProjectCmd.AddCommand(projectDeleteCmd)
+	ProjectCmd.AddCommand(projectListCmd)
 }

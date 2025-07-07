@@ -28,11 +28,13 @@ step() {
 # --- Execução do Teste ---
 step "Adicionando o repositório Git"
 $OPSMASTER_BIN --context $ARGO_CONTEXT argocd repo add $REPO_URL
+sleep 5s
 
 step "Criando o projeto no Argo CD"
 $OPSMASTER_BIN --context $ARGO_CONTEXT argocd project create $PROJECT_NAME \
     --description "Uma API web simples em Go" \
     --source-repo $REPO_URL
+sleep 5s
 
 step "Criando a aplicação (Deploy)"
 $OPSMASTER_BIN --context $ARGO_CONTEXT argocd app create \
@@ -45,9 +47,11 @@ $OPSMASTER_BIN --context $ARGO_CONTEXT argocd app create \
     --set-image-repo "$IMAGE_REPO" \
     --set-image-tag "$IMAGE_TAG" \
     --set-chart-dependency "$CHART_DEPENDENCY"
+sleep 5s
 
 step "Aguardando a aplicação ficar saudável e sincronizada"
-$OPSMASTER_BIN --context $ARGO_CONTEXT argocd app wait "$APP_NAME" --timeout 2m
+$OPSMASTER_BIN --context $ARGO_CONTEXT argocd app wait "$APP_NAME" --timeout 1m
+sleep 5s
 
 step "Listando e confirmando o status da aplicação"
 $OPSMASTER_BIN --context $ARGO_CONTEXT argocd app list "$APP_NAME"
@@ -60,13 +64,13 @@ read -p "Pressione Enter para apagar os recursos e limpar o ambiente..."
 
 step "Apagando a aplicação"
 $OPSMASTER_BIN --context $ARGO_CONTEXT argocd app delete "$APP_NAME"
+sleep 5s
 
-# (Quando a funcionalidade for implementada)
-# step "Apagando o projeto"
-# $OPSMASTER_BIN --context $ARGO_CONTEXT argocd project delete $PROJECT_NAME
+step "Apagando o projeto"
+$OPSMASTER_BIN --context $ARGO_CONTEXT argocd project delete $PROJECT_NAME
+sleep 5s
 
-# (Quando a funcionalidade for implementada)
-# step "Apagando o repositório"
-# $OPSMASTER_BIN --context $ARGO_CONTEXT argocd repo delete $REPO_URL
+step "Apagando o repositório"
+$OPSMASTER_BIN --context $ARGO_CONTEXT argocd repo delete $REPO_URL
 
 echo -e "\n\e[1;32m🧹 Ambiente limpo!\e[0m"

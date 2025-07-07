@@ -72,7 +72,3 @@ var appListCmd = &cobra.Command{
 		return nil
 	},
 }
-
-func init() {
-	AppCmd.AddCommand(appListCmd)
-}

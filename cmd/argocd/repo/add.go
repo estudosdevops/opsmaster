@@ -44,7 +44,6 @@ var repoAddCmd = &cobra.Command{
 }
 
 func init() {
-	RepoCmd.AddCommand(repoAddCmd)
 	repoAddCmd.Flags().StringVar(&repoUsername, "username", "", "Nome de usuário para repositórios privados")
 	repoAddCmd.Flags().StringVar(&repoPassword, "password", "", "Senha ou token de acesso pessoal para repositórios privados")
 }
