@@ -44,7 +44,7 @@ opsmaster argocd app list --help
 opsmaster argocd project create --help
 ```
 
-## Criando e Removendo Recursos
+## Listando, Criando e Removendo Recursos
 
 ```bash
 # Adiciona um novo repositório Git
@@ -52,6 +52,9 @@ opsmaster argocd repo add https://github.com/sua-empresa/meu-servico.git
 
 # Cria um novo projeto
 opsmaster argocd project create meu-projeto-staging --description "Projeto para Staging"
+
+# Exibe detalhes de uma aplicação para depuração
+opsmaster argocd app get meu-servico-stg
 
 # Força a sincronização de uma aplicação
 opsmaster argocd app sync meu-servico-stg
@@ -103,6 +106,10 @@ Para o fluxo completo de deploy de uma nova aplicação com o comando app create
 - opsmaster argocd app create
 
   Cria ou atualiza uma aplicação. Este comando possui várias flags para especificar os detalhes do deploy. Use ... app create --help para ver todas as opções.
+
+- opsmaster argocd app get <nome-da-aplicacao>
+
+  Exibe informações detalhadas de uma aplicação, incluindo uma tabela com o status de todos os seus recursos sincronizados. Ideal para depuração
 
 - opsmaster argocd app list [nome-da-aplicacao]
 
