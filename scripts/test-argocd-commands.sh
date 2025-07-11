@@ -16,7 +16,7 @@ REPO_PATH="chart"
 VALUES_FILE="values-stg.yaml"
 IMAGE_REPO="fcruzcoelho/sample-api"
 IMAGE_TAG="v0.1.0"
-CHART_DEPENDENCY="generic-app"
+CHART_DEPENDENCY="base-app"
 
 # --- Funções de Ajuda ---
 
