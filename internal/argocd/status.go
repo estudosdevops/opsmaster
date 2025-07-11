@@ -99,7 +99,7 @@ func ListApplications(ctx context.Context, serverAddr, authToken string, insecur
 }
 
 // WaitForAppStatus espera que uma aplicação atinja o estado Healthy e Synced.
-func WaitForAppStatus(ctx context.Context, serverAddr, authToken string, insecure bool, appName string, interval time.Duration) error {
+func WaitForAppStatus(ctx context.Context, serverAddr, authToken string, insecure bool, appName string, interval time.Duration) (*v1alpha1.Application, error) {
 	log := logger.Get()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -109,18 +109,22 @@ func WaitForAppStatus(ctx context.Context, serverAddr, authToken string, insecur
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("tempo esgotado aguardando a aplicação '%s': %w", appName, ctx.Err())
+			return nil, fmt.Errorf("tempo esgotado aguardando a aplicação '%s': %w", appName, ctx.Err())
 		case <-ticker.C:
-			app, err := GetApplication(ctx, serverAddr, authToken, insecure, appName)
+			// Busca os detalhes completos da aplicação a cada verificação.
+			app, err := GetApplicationDetails(ctx, serverAddr, authToken, insecure, appName)
 			if err != nil {
 				log.Error("Erro ao buscar o status da aplicação, tentando novamente...", "erro", err)
 				continue
 			}
 
-			log.Info("Verificando status...", "saúde", app.HealthStatus.Status, "sincronização", app.SyncStatus)
+			healthStatus := app.Status.Health.Status
+			syncStatus := app.Status.Sync.Status
 
-			if string(app.HealthStatus.Status) == "Healthy" && string(app.SyncStatus) == "Synced" {
-				return nil
+			log.Info("Verificando status...", "saúde", healthStatus, "sincronização", syncStatus)
+
+			if string(healthStatus) == "Healthy" && string(syncStatus) == "Synced" {
+				return app, nil // Sucesso! Retorna o objeto completo da aplicação.
 			}
 		}
 	}

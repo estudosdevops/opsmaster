@@ -2,6 +2,7 @@
 package app
 
 import (
+	"github.com/estudosdevops/opsmaster/cmd/argocd/app/rollout"
 	"github.com/spf13/cobra"
 )
 
@@ -23,4 +24,5 @@ func init() {
 	AppCmd.AddCommand(appDeleteCmd)
 	AppCmd.AddCommand(appSyncCmd)
 	AppCmd.AddCommand(appGetCmd)
+	AppCmd.AddCommand(rollout.RolloutCmd)
 }

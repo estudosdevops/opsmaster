@@ -16,7 +16,7 @@ REPO_PATH="chart"
 VALUES_FILE="values-stg.yaml"
 IMAGE_REPO="fcruzcoelho/sample-api"
 IMAGE_TAG="v0.1.0"
-CHART_DEPENDENCY="generic-app"
+CHART_DEPENDENCY="base-app"
 
 # --- Funções de Ajuda ---
 
@@ -53,11 +53,8 @@ step "Sincronizando a aplicação"
 $OPSMASTER_BIN argocd app sync "$APP_NAME"
 
 step "Aguardando a aplicação ficar saudável e sincronizada"
-$OPSMASTER_BIN --context $ARGO_CONTEXT argocd app wait "$APP_NAME" --timeout 1m
+$OPSMASTER_BIN --context $ARGO_CONTEXT argocd app wait --show-details=true "$APP_NAME" --timeout 1m
 sleep 5s
-
-step "Listando e confirmando o status da aplicação"
-$OPSMASTER_BIN --context $ARGO_CONTEXT argocd app list "$APP_NAME"
 
 echo -e "\n\e[1;32m✅ Teste de deploy concluído com sucesso! A aplicação está no ar.\e[0m"
 # shellcheck disable=SC2162

@@ -57,7 +57,7 @@ func init() {
 	appCreateCmd.Flags().String("values", "values.yaml", "Caminho para o arquivo de valores dentro do repositório (relativo ao repo-path)")
 	appCreateCmd.Flags().String("set-image-repo", "", "Define o nome do repositório da imagem (obrigatório)")
 	appCreateCmd.Flags().String("set-image-tag", "", "Define a tag da imagem a ser usada no deploy (obrigatório)")
-	appCreateCmd.Flags().String("set-chart-dependency", "generic-app", "Nome da dependência do chart no Chart.yaml")
+	appCreateCmd.Flags().String("set-chart-dependency", "base-app", "Nome da dependência do chart no Chart.yaml")
 	appCreateCmd.Flags().String("dest-server", "https://kubernetes.default.svc", "Endereço do cluster Kubernetes de destino")
 
 	// Marca as flags mais importantes como obrigatórias.
