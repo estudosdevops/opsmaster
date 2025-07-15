@@ -1,5 +1,5 @@
 ---
-name: Manage Labels
+name: 🏷️ Manage Labels
 
 on:
   workflow_dispatch:
