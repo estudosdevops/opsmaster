@@ -4,17 +4,17 @@ tag-template: 'v$NEXT_PATCH_VERSION'
 categories:
   - title: '🚀 Features'
     labels:
-      - 'feature'
-      - 'enhancement'
+      - '🚀 feature'
+      - '✨ enhancement'
   - title: '🐛 Bug Fixes'
     labels:
-      - 'fix'
-      - 'bug'
+      - '🐛 bug'
+      - '🩹 fix'
   - title: '🧹 Maintenance'
     labels:
-      - 'chore'
-      - 'docs'
-      - 'ci'
+      - '🧹 chore'
+      - '📚 docs'
+      - '🤖 ci'
 template: |
   ## What's Changed
 
