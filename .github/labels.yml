@@ -1,0 +1,28 @@
+---
+- name: "🐛 bug"
+  description: "Something isn't working"
+  color: "d73a4a"
+
+- name: "🤖 ci"
+  description: "Changes to our CI configuration files and scripts"
+  color: "a2eeef"
+
+- name: "🧹 chore"
+  description: "General maintenance and other tasks"
+  color: "ffffff"
+
+- name: "📚 docs"
+  description: "Documentation only changes"
+  color: "0075ca"
+
+- name: "✨ enhancement"
+  description: "New feature or request"
+  color: "a2eeef"
+
+- name: "🚀 feature"
+  description: "A new feature"
+  color: "a2eeef"
+
+- name: "🩹 fix"
+  description: "A bug fix"
+  color: "d73a4a"
