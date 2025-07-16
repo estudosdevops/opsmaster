@@ -7,11 +7,10 @@ repos:
     -   id: end-of-file-fixer
     -   id: trailing-whitespace
 -   repo: https://github.com/golangci/golangci-lint
-    rev: v1.59.1
+    rev: v2.2.2
     hooks:
     -   id: golangci-lint
-        args:
-        - --fix
+        args: [ "--config=.golangci.yml" ]
 -   repo: https://github.com/tekwizely/pre-commit-golang
     rev: v1.0.0-rc.1
     hooks:
