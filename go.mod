@@ -2,6 +2,8 @@ module github.com/estudosdevops/opsmaster
 
 go 1.24.4
 
+toolchain go1.24.5
+
 require (
 	github.com/argoproj/argo-cd/v2 v2.14.15
 	github.com/fatih/color v1.16.0
