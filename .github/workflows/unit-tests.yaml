@@ -27,9 +27,9 @@ jobs:
         run: go install github.com/kyoh86/richgo@latest
 
       - name: Run Linter
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v6
         with:
-          version: v2.1
+          version: v1.59
 
       - name: Run Tests
         run: go list ./... | grep -v '/cmd' | xargs richgo test -v -cover -race

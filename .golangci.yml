@@ -1,4 +1,6 @@
 ---
+version: 2
+
 run:
   skip-go-version-check: true
 
