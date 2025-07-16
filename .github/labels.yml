@@ -26,3 +26,7 @@
 - name: "🩹 fix"
   description: "A bug fix"
   color: "d73a4a"
+
+- name: "🧪 test"
+  description: "Adding missing tests or refactoring existing ones"
+  color: "f9d0c4"
