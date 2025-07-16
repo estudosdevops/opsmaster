@@ -1,22 +1,46 @@
 ---
 run:
   timeout: 5m
-  tests: false
-  modules-download-mode: readonly
+  skip-dirs:
+    - "vendor"
+    - "third_party"
+  tests: true
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - gosimple
+    - unused
+    - deadcode
+    - errcheck
+    - gocyclo
+    - gofmt
+    - goimports
+    - ineffassign
+    - typecheck
+  disable:
+    - maligned
+    - gochecknoglobals
+    - gochecknoinits
 
 linters-settings:
   gocyclo:
     min-complexity: 15
+  goimports:
+    local-prefixes: "github.com/estudosdevops/opsmaster"
 
-linters:
-  disable-all: true
-  enable:
-    - gofmt
-    - goimports
-    - revive
-    - gocyclo
-    - unconvert
-    - ineffassign
-    - tparallel
-    - govet
-    - unused
+issues:
+  exclude-use-default: false
+  ignore:
+    - "^Error return value .+ is not checked$"
+    - "should have comment or be unexported"
+    - "cyclomatic complexity .* is high"
+
+format:
+  style: color
+
+output:
+  format: colored-line-number
+  sort-results: true
+  uniq-by-line: true
