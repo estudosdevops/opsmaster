@@ -1,4 +1,9 @@
 ---
+run:
+  timeout: 5m
+  tests: false
+  modules-download-mode: readonly
+
 linters-settings:
   gocyclo:
     min-complexity: 15
