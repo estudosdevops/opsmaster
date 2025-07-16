@@ -1,7 +1,4 @@
 ---
-run:
-  skip-go-version-check: true
-
 linters-settings:
   gocyclo:
     min-complexity: 15
