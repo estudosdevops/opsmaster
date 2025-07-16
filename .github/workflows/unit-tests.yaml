@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   test:
-    name: Unit Tests
+    name: Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
