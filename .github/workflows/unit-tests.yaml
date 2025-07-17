@@ -1,0 +1,35 @@
+name: 🧪 Unit Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
+
+concurrency:
+  cancel-in-progress: true
+  group: unit-tests-${{ github.ref }}
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Install richgo for colored test output
+        run: go install github.com/kyoh86/richgo@latest
+
+      - name: Running Linter
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.2.2
+
+      - name: Running Tests
+        run: go list ./... | grep -v '/cmd' | xargs richgo test -v -cover -race

@@ -19,7 +19,7 @@ contexts:
       server: "argocd.seu-dominio.com"
       token: "SEU_TOKEN_DE_STAGING_AQUI"
       insecure: true # Use 'true' apenas para ambientes de homelab/teste
-  
+
   producao:
     argocd:
       server: "argo.empresa.com"
@@ -116,7 +116,7 @@ Para o fluxo completo de deploy de uma nova aplicação com o comando app create
   Exibe uma tabela com todas as aplicações ou os detalhes de uma aplicação específica.
 
 - opsmaster argocd app sync <nome-da-aplicacao>
-  
+
   Inicia uma sincronização imediata para uma aplicação. Use a flag --force para substituir recursos e apagar os que não existem mais no Git
 
 - opsmaster argocd app wait <nome-da-aplicacao>
