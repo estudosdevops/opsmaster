@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   test:
-    name: Tests
+    name: Run Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -26,10 +26,10 @@ jobs:
       - name: Install richgo for colored test output
         run: go install github.com/kyoh86/richgo@latest
 
-      - name: Run Linter
+      - name: Running Linter
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.2.2
 
-      - name: Run Tests
+      - name: Running Tests
         run: go list ./... | grep -v '/cmd' | xargs richgo test -v -cover -race
