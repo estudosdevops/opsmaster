@@ -10,7 +10,8 @@ repos:
     rev: v2.2.2
     hooks:
     -   id: golangci-lint
-        args: [ "--config=.golangci.yml" ]
+        args:
+        - --fix
 -   repo: https://github.com/tekwizely/pre-commit-golang
     rev: v1.0.0-rc.1
     hooks:
