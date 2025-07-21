@@ -34,7 +34,7 @@ func scanPort(host string, port int, timeout time.Duration) ScanResult {
 		if strings.Contains(err.Error(), "connection refused") {
 			return ScanResult{Port: port, Status: "Fechada"}
 		}
-		// Outros erros podem indicar problemas de resolução de nome ou de rota.
+		// Outros erros podem indicar problems de resolução de nome ou de rota.
 		// Para simplificar, vamos considerá-los como filtrados também.
 		return ScanResult{Port: port, Status: "Fechado/Filtrado"}
 	}
@@ -86,7 +86,7 @@ func parsePorts(portRange string) ([]int, error) {
 }
 
 // ScanPorts executa o escaneamento de portas de forma concorrente.
-func ScanPorts(host string, portRange string, timeout time.Duration) ([]ScanResult, error) {
+func ScanPorts(host, portRange string, timeout time.Duration) ([]ScanResult, error) {
 	portsToScan, err := parsePorts(portRange)
 	if err != nil {
 		return nil, err

@@ -58,6 +58,8 @@ func CreateProject(ctx context.Context, serverAddr, authToken string, insecure b
 }
 
 // DeleteProject apaga um projeto específico no Argo CD.
+//
+//nolint:dupl // A estrutura é intencionalmente semelhante a outras funções de 'delete' para clareza.
 func DeleteProject(ctx context.Context, serverAddr, authToken string, insecure bool, projName string) error {
 	apiClient, err := NewClient(serverAddr, authToken, insecure)
 	if err != nil {

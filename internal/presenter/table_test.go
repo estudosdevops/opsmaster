@@ -26,7 +26,10 @@ func TestPrintTable(t *testing.T) {
 	w.Close()             // Fecha o lado de escrita do cano.
 	os.Stdout = oldStdout // Restaura a saída padrão original.
 	var buf bytes.Buffer
-	io.Copy(&buf, r) // Lê tudo o que foi escrito no cano para um buffer.
+
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("Erro ao ler do cano: %v", err)
+	}
 
 	output := buf.String()
 

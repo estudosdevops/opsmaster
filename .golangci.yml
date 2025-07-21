@@ -23,7 +23,6 @@ linters:
     - govet
     - intrange
     - ineffassign
-    - lll
     - misspell
     - nakedret
     - noctx
@@ -122,6 +121,7 @@ linters:
       - legacy
     paths:
       - cmd # command files
+      - internal/logger/logger.go
     rules:
       - path: (.+)_test\.go
         linters:

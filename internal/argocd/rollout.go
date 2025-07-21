@@ -29,7 +29,8 @@ func runRolloutAction(ctx context.Context, serverAddr, authToken string, insecur
 	}
 
 	var rolloutResource *v1alpha1.ResourceStatus
-	for _, res := range app.Status.Resources {
+	for i := range app.Status.Resources {
+		res := app.Status.Resources[i]
 		if res.Kind == "Rollout" {
 			rolloutResource = &res
 			break

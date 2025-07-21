@@ -8,10 +8,11 @@ import (
 	"github.com/miekg/dns"
 )
 
+// minDNSRecordParts define o número mínimo de partes que esperamos em uma resposta de registro DNS.
+const minDNSRecordParts = 4
+
 // Query realiza uma consulta DNS específica para um domínio e tipo de registro.
-// É uma versão mais poderosa, similar ao que uma ferramenta como 'dig' faz.
-// Retorna uma fatia de strings com os resultados ou um erro.
-func Query(domain string, recordType string) ([]string, error) {
+func Query(domain, recordType string) ([]string, error) {
 	// Configura o cliente DNS que fará a requisição.
 	client := new(dns.Client)
 
@@ -43,15 +44,9 @@ func Query(domain string, recordType string) ([]string, error) {
 	}
 
 	var results []string
-	// Itera sobre a seção de respostas da mensagem.
 	for _, answer := range response.Answer {
-		// O método .String() de cada registro geralmente fornece uma boa representação.
-		// Vamos extrair apenas o conteúdo principal do registro.
-		// Ex: "google.com. 300 IN A 172.217.29.14" -> extrai "172.217.29.14"
-		// Ex: "google.com. 600 IN MX 10 smtp.google.com." -> extrai "10 smtp.google.com."
 		parts := strings.Fields(answer.String())
-		if len(parts) > 4 {
-			// Junta todos os campos após o tipo de registro (ex: MX, que tem prioridade e host)
+		if len(parts) > minDNSRecordParts {
 			resultData := strings.Join(parts[4:], " ")
 			results = append(results, resultData)
 		}
