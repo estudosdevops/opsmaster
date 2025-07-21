@@ -16,8 +16,8 @@ func PrintTable(header []string, rows [][]string) {
 	separatorStr := ""
 	for i, col := range header {
 		headerStr += col
-		//Cria a linha separadro (ex: "----- ) com o mesmo tamanho do cabeçalho
-		for j := 0; j < len(col); j++ {
+		// Cria a linha separadro (ex: "----- ) com o mesmo tamanho do cabeçalho
+		for range len(col) {
 			separatorStr += "-"
 		}
 		if i < len(header)-1 {

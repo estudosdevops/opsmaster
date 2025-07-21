@@ -2,11 +2,13 @@
 package monitor
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestCheckURL testa a nossa função de verificação de URL.
@@ -23,7 +25,7 @@ func TestCheckURL(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Tabela de Testes
+	// --- Tabela de Testes ---
 	testCases := []struct {
 		name           string
 		urlToTest      string
@@ -48,7 +50,13 @@ func TestCheckURL(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := checkURL(tc.urlToTest)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			// Executa a função que queremos testar, agora passando o contexto.
+			result := checkURL(ctx, tc.urlToTest)
+
+			// Verifica se a string de resultado contém o texto que esperamos.
 			if !strings.Contains(result, tc.expectedResult) {
 				t.Errorf("Resultado inesperado. Esperava conter '%s', mas recebi: '%s'", tc.expectedResult, result)
 			}

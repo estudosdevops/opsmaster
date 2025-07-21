@@ -30,7 +30,7 @@ func TestParsePorts(t *testing.T) {
 			expectError:   false,
 		},
 		{
-			name:          "Combinação de portas e intervalos",
+			name:          "Combinação de portas e intervals",
 			input:         "80, 443, 1020-1022",
 			expectedPorts: []int{80, 443, 1020, 1021, 1022},
 			expectError:   false,
@@ -113,7 +113,7 @@ func TestScanPort(t *testing.T) {
 		}
 	}()
 
-	// Aumenta a pausa para dar mais tempo ao sistema operacional
+	// Aumenta a pausa para dar mais tempo ao sistema operational
 	// de preparar o listener, tornando o teste menos propenso a falhas.
 	time.Sleep(100 * time.Millisecond)
 
@@ -149,7 +149,7 @@ func TestScanPort(t *testing.T) {
 
 // getClosedPort é uma função helper para encontrar uma porta garantidamente fechada.
 func getClosedPort(t *testing.T) int {
-	// Pede ao sistema operacional uma porta livre.
+	// Pede ao sistema operational uma porta livre.
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Não foi possível encontrar uma porta livre para o teste: %v", err)

@@ -1,15 +1,20 @@
 package ip
 
 import (
+	"context"
 	"net"
 	"testing"
+	"time"
 )
 
 // TestFetchPublicIP testa se a função consegue buscar um IP público.
 // Este teste requer uma conexão ativa com a internet.
 func TestFetchPublicIP(t *testing.T) {
-	// Executa a função que queremos testar.
-	ipInfo, err := FetchPublicIP()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Passa o contexto para a função.
+	ipInfo, err := FetchPublicIP(ctx)
 
 	// Verifica se houve um erro inesperado.
 	if err != nil {

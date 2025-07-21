@@ -2,7 +2,9 @@
 package get
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"github.com/estudosdevops/opsmaster/internal/ip"
 	"github.com/estudosdevops/opsmaster/internal/logger"
@@ -41,7 +43,9 @@ var ipCmd = &cobra.Command{
 
 		if showPublic || showAll {
 			log.Info("Buscando informações do IP público...")
-			publicInfo, err := ip.FetchPublicIP()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			publicInfo, err := ip.FetchPublicIP(ctx)
 			if err != nil {
 				log.Error("Não foi possível obter o IP público", "erro", err)
 			} else {

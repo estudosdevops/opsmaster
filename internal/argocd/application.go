@@ -28,7 +28,7 @@ type AppOptions struct {
 }
 
 // CreateApplication constrói um objeto Application programaticamente e o envia para a API do Argo CD.
-func CreateApplication(ctx context.Context, serverAddr, authToken string, insecure bool, opts AppOptions) error {
+func CreateApplication(ctx context.Context, serverAddr, authToken string, insecure bool, opts *AppOptions) error {
 	// 1. Usa nosso helper para obter o cliente principal.
 	apiClient, err := NewClient(serverAddr, authToken, insecure)
 	if err != nil {

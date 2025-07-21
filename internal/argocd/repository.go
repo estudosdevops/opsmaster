@@ -57,6 +57,8 @@ func AddRepository(ctx context.Context, serverAddr, authToken string, insecure b
 }
 
 // DeleteRepository remove o registro de um repositório Git no Argo CD.
+//
+//nolint:dupl // A estrutura é intencionalmente semelhante a outras funções de 'delete' para clareza.
 func DeleteRepository(ctx context.Context, serverAddr, authToken string, insecure bool, repoURL string) error {
 	apiClient, err := NewClient(serverAddr, authToken, insecure)
 	if err != nil {

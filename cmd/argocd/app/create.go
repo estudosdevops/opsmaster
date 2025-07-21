@@ -38,7 +38,7 @@ var appCreateCmd = &cobra.Command{
 		defer cancel()
 
 		log.Info("Criando/atualizando aplicação no Argo CD...", "aplicação", appOpts.AppName)
-		if err := argocd.CreateApplication(ctx, serverAddr, authToken, insecure, appOpts); err != nil {
+		if err := argocd.CreateApplication(ctx, serverAddr, authToken, insecure, &appOpts); err != nil {
 			log.Error("Falha ao criar a aplicação", "erro", err)
 			return err
 		}

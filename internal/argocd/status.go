@@ -85,7 +85,8 @@ func ListApplications(ctx context.Context, serverAddr, authToken string, insecur
 	}
 
 	var statuses []AppStatusInfo
-	for _, app := range appList.Items {
+	for i := range appList.Items {
+		app := appList.Items[i]
 		statuses = append(statuses, AppStatusInfo{
 			Name:         app.Name,
 			Project:      app.Spec.Project,
@@ -133,6 +134,8 @@ func WaitForAppStatus(ctx context.Context, serverAddr, authToken string, insecur
 // --- Funções de Projeto ---
 
 // GetProject busca um projeto específico pelo nome.
+//
+//nolint:dupl // A estrutura é intencionalmente semelhante a outras funções de 'get' para clareza.
 func GetProject(ctx context.Context, serverAddr, authToken string, insecure bool, projName string) (*v1alpha1.AppProject, error) {
 	apiClient, err := NewClient(serverAddr, authToken, insecure)
 	if err != nil {
@@ -172,6 +175,8 @@ func ListProjects(ctx context.Context, serverAddr, authToken string, insecure bo
 
 // --- Funções de Repositório ---
 // GetRepository busca um repositório específico pela URL.
+//
+//nolint:dupl // A estrutura é intencionalmente semelhante a outras funções de 'get' para clareza.
 func GetRepository(ctx context.Context, serverAddr, authToken string, insecure bool, repoURL string) (*v1alpha1.Repository, error) {
 	apiClient, err := NewClient(serverAddr, authToken, insecure)
 	if err != nil {

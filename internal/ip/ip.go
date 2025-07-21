@@ -2,6 +2,7 @@
 package ip
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -32,13 +33,22 @@ type PublicIPInfo struct {
 }
 
 // FetchPublicIP busca o endereço de IP público fazendo uma requisição a um serviço externo.
-// Retorna o IP como uma string ou um erro, caso ocorra.
-func FetchPublicIP() (*PublicIPInfo, error) {
-	const serviceURL = "http://ipinfo.io/json" // URL da API que retorna o JSON
+// Agora aceita um contexto para controle de timeout e cancelamento.
+func FetchPublicIP(ctx context.Context) (*PublicIPInfo, error) {
+	const serviceURL = "https://ipinfo.io/json"
 	client := http.Client{
-		Timeout: 5 * time.Second,
+		// O timeout do cliente ainda é uma boa prática como um fallback geral.
+		Timeout: 10 * time.Second,
 	}
-	resp, err := client.Get(serviceURL)
+
+	// Cria a requisição com o contexto.
+	req, err := http.NewRequestWithContext(ctx, "GET", serviceURL, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("falha ao criar a requisição HTTP: %w", err)
+	}
+
+	// Executa a requisição usando o método Do.
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("falha ao conectar ao serviço de IP: %w", err)
 	}
@@ -48,7 +58,6 @@ func FetchPublicIP() (*PublicIPInfo, error) {
 		return nil, fmt.Errorf("serviço de IP retornou um status inesperado: %s", resp.Status)
 	}
 
-	// Decodifica a resposta JSON diretamente na nossa struct PublicIPInfo.
 	var ipInfo PublicIPInfo
 	if err := json.NewDecoder(resp.Body).Decode(&ipInfo); err != nil {
 		return nil, fmt.Errorf("falha ao decodificar a resposta JSON: %w", err)
