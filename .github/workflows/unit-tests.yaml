@@ -23,13 +23,13 @@ jobs:
         with:
           go-version: '1.24'
 
-      - name: Install richgo for colored test output
-        run: go install github.com/kyoh86/richgo@latest
+      - name: Install gotestsum for better test output
+        run: go install gotest.tools/gotestsum@latest
 
-      - name: Running Linter
+      - name: Run Linter
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.2.2
 
-      - name: Running Tests
-        run: go list ./... | grep -v '/cmd' | xargs richgo test -v -cover -race
+      - name: Run Unit Tests
+        run: go list ./... | grep -v '/cmd' | xargs gotestsum --format=short-verbose -- -cover -race
