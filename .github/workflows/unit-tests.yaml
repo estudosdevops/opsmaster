@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   test:
-    name: Run Tests
+    name: Unit Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -31,5 +31,5 @@ jobs:
         with:
           version: v2.2.2
 
-      - name: Run Unit Tests
+      - name: Run Tests
         run: go list ./... | grep -v '/cmd' | xargs gotestsum --format=short-verbose -- -cover -race
