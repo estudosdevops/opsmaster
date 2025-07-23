@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/estudosdevops/opsmaster/cmd/argocd/app"
+	"github.com/estudosdevops/opsmaster/cmd/argocd/cluster"
 	"github.com/estudosdevops/opsmaster/cmd/argocd/project"
 	"github.com/estudosdevops/opsmaster/cmd/argocd/repo"
 	"github.com/spf13/cobra"
@@ -64,6 +65,7 @@ func init() {
 	ArgocdCmd.AddCommand(app.AppCmd)
 	ArgocdCmd.AddCommand(project.ProjectCmd)
 	ArgocdCmd.AddCommand(repo.RepoCmd)
+	ArgocdCmd.AddCommand(cluster.ClusterCmd)
 
 	// Define as flags persistentes que serão herdadas por todos os subcomandos de 'argocd'.
 	ArgocdCmd.PersistentFlags().StringVar(&serverAddr, "server", "", "Endereço do servidor Argo CD (sobrescreve o config)")
