@@ -1,0 +1,20 @@
+---
+alwaysApply: true
+---
+# Commit Message Format Rule
+
+Cada tarefa deve ser registrada em um commit separado.
+
+- Use o formato da mensagem de commit:
+  - Para novas funcionalidades ou mudanças: `feat: [ação]`
+  - Para correções de problemas: `fix: [problema resolvido]`
+  - Para tarefas de manutenção ou ajustes menores: `chore: [descrição]`
+  - Para alterações relacionadas a testes: `test: [descrição do teste]`
+  - Para refatorações de código: `refactor: [descrição da refatoração]`
+
+Exemplos:
+- `feat: adicionar comando de deploy automático`
+- `fix: corrigir erro de autenticação no login`
+- `chore: atualizar dependências do projeto`
+- `test: adicionar testes para o módulo de autenticação`
+- `refactor: simplificar lógica de verificação de usuário`

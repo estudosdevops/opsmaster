@@ -1,0 +1,10 @@
+---
+alwaysApply: true
+---
+# Regra de Foco e Escopo para Implementação
+
+- Sempre implemente **uma funcionalidade por vez**.
+- Divida prompts grandes em tarefas menores e trate cada uma separadamente.
+- Confirme o escopo da tarefa com o usuário antes de gerar código para demandas extensas ou ambíguas.
+
+Essas práticas garantem organização, melhor rastreabilidade e maior qualidade no desenvolvimento do projeto.

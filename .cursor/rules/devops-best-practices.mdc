@@ -1,0 +1,113 @@
+---
+alwaysApply: true
+---
+
+# Guia de Boas Práticas DevOps
+
+## Scripting Bash
+
+- Use nomes descritivos para scripts e variáveis (ex: `backup_files.sh`, `log_rotation`).
+- Escreva scripts modulares com funções reutilizáveis e bem comentadas.
+- Valide todas as entradas usando `getopts` ou lógica manual.
+- Garanta portabilidade com sintaxe POSIX.
+- Utilize `shellcheck` para lintar scripts.
+- Redirecione saída para logs, separando stdout/stderr.
+- Use `trap` para tratamento de erros e limpeza.
+- Automatize tarefas cron e transferências remotas com SCP/SFTP e autenticação por chave.
+
+---
+
+## Ansible e Gerenciamento de Configuração
+
+- Siga princípios idempotentes em todos os playbooks.
+- Organize playbooks, roles e inventário conforme melhores práticas.
+- Use `group_vars`/`host_vars` para configurações específicas.
+- Valide playbooks com `ansible-lint`.
+- Use handlers para reiniciar serviços apenas quando necessário.
+- Gerencie segredos com **Ansible Vault**.
+- Prefira inventário dinâmico para nuvem.
+- Utilize templates Jinja2 e tags para flexibilidade.
+- Use `block:` e `rescue:` para tratamento de erros estruturado.
+
+---
+
+## Kubernetes e GitOps
+
+- Gerencie deploys com **Helm charts**, **helmfile**, **ArgoCD** ou **Flux**.
+- Siga princípios GitOps para estado declarativo do cluster.
+- Use identidades de workload para segurança pod-to-service.
+- Prefira StatefulSets para apps com armazenamento persistente.
+- Implemente HPA, políticas de rede e monitore workloads com Prometheus, Grafana e Falco.
+
+---
+
+## Infraestrutura como Código (IaC) e Cloud
+
+- Provisione recursos com **Terraform**, **Terragrunt** ou **CloudFormation**.
+- Versione toda infraestrutura em repositórios Git.
+- Realize code review para mudanças em IaC.
+- Use AWS CodePipeline/CodeBuild/CodeDeploy para CI/CD.
+- Implemente soluções custo-efetivas e seguras (Security Groups, IAM, VPCs).
+
+---
+
+## Pipelines, Automação e Deploys
+
+- Utilize pipelines como código (**Jenkinsfile**, **GitHub Actions**, **GitLab CI**).
+- Escreva pipelines modulares, reutilizáveis e com rollback automatizado.
+- Implemente deploys blue-green, canary e automação de testes.
+- Centralize logs, métricas e traces para análise e resposta a incidentes.
+
+---
+
+## Segurança e Gestão de Segredos
+
+- Gerencie segredos e credenciais com **HashiCorp Vault**, **AWS Secrets Manager**, **Azure Key Vault** ou **Ansible Vault**.
+- Realize revisões periódicas de permissões e segredos.
+- Integre scanners de vulnerabilidade (**Trivy**, **Snyk**) ao pipeline CI/CD.
+- Proteja sistemas com TLS, IAM roles e firewalls.
+
+---
+
+## Observabilidade e Resiliência
+
+- Implemente rastreamento distribuído com **OpenTelemetry**.
+- Mantenha dashboards e alertas proativos.
+- Realize testes de resiliência e pratique **chaos engineering** quando possível.
+
+---
+
+## Golang para DevOps
+
+- Escreva código idiomático Go, usando módulos e estrutura padrão (`cmd/`, `internal/`, `pkg/`).
+- Prefira composição a herança.
+- Use testes unitários (`testing`, `testify`), cobra para CLI e viper para configuração.
+- Compile binários estáticos para distribuição.
+- Documente o código com comentários claros e `go doc`.
+- Use CI para testar e compilar projetos Go.
+
+---
+
+## Testes e Documentação
+
+- Escreva testes unitários, integração e aceitação significativos.
+- Gere documentação automatizada (ex: **Swagger/OpenAPI** para APIs, **Markdown** gerado por ferramentas).
+- Inclua exemplos práticos e links para repositórios open source ou templates de referência.
+- Use diagramas para descrever arquitetura e fluxos.
+
+---
+
+## Cultura, Colaboração e Melhoria Contínua
+
+- Promova colaboração entre Dev, Ops e Segurança.
+- Realize **postmortems sem culpabilização** e incentive feedback contínuo.
+- Automatize tarefas repetitivas e mantenha documentação viva.
+- Use Git com estratégia de ramificação clara e code review obrigatório.
+
+---
+
+## Resumo
+
+- Consolide práticas por tema para evitar dispersão.
+- Atualize ferramentas e exemplos conforme o estado da arte.
+- Centralize recomendações para facilitar consulta e aplicação.
