@@ -17,6 +17,7 @@ O OpsMaster é organizado em grupos de comandos lógicos segue abaixo alguns exe
 - `get:` Busca e exibe informações de rede e de sistema (ip, dns).
 
 - `argocd:` Interage com a API do Argo CD para automatizar o ciclo de vida de aplicações (app, project, repo).
+- `nelm:` Gerencia releases Helm de forma "mágica" com validação, planejamento e execução automática.
 
 ⚙️ Instalação
 
@@ -40,7 +41,11 @@ opsmaster scan ports scanme.nmap.org --ports 22,80,443
 
 opsmaster get dns google.com --type MX
 
-Para exemplos de uso avançado, como a configuração e o deploy de aplicações com o ArgoCD, por favor, consulte a documentação dos comandos argocd.
+### Instala uma release Helm de forma "mágica"
+
+opsmaster nelm install -r sample-api --env stg --kube-context kubedev
+
+Para exemplos de uso avançado, como a configuração e o deploy de aplicações com o ArgoCD ou gerenciamento de releases Helm, por favor, consulte a documentação dos comandos [argocd](./docs/argocd.md) e [nelm](./docs/nelm.md).
 
 🤝 Contribuição
 
