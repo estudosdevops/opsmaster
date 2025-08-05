@@ -130,61 +130,19 @@ Antes de executar qualquer comando, o nelm valida:
 - ✅ Informações do chart (nome, versão, descrição)
 - ✅ Dependências do chart
 
-## 📊 Exemplo de Saída
-
-```bash
-$ opsmaster nelm install -r sample-api --env stg --kube-context kubedev
-
-🔍 Iniciando validações prévias release=sample-api
-📦 Chart: sample-api v1.0.0
-📝 Descrição: Uma API web simples em Go
-🔍 Verificando dependências do chart path=./sample-api/Chart.lock
-✅ Dependências do chart verificadas
-✅ Validações prévias concluídas release=sample-api
-
-🔧 Executando 'nelm chart lint' release=sample-api
-✅ Validação do chart concluída com sucesso! release=sample-api
-
-📋 Executando 'nelm release plan install'... release=sample-api
-📄 Usando arquivo de valores específico do ambiente file=values-stg.yaml release=sample-api
-
-🚀 Resumo da instalação para 'sample-api':
-   📁 Diretório: ./sample-api
-   🌍 Ambiente: stg
-   🎯 Namespace: sample-api
-   🔧 Contexto K8s: kubedev
-   📄 Valores: values-stg.yaml
-
-Deseja aplicar estas alterações? (s/N): s
-
-🚀 Executando 'nelm release install'... release=sample-api
-✅ Instalação concluída com sucesso! release=sample-api
-```
-
 ## 🛠️ Pré-requisitos
 
 Para usar o comando `nelm`, você precisa ter:
 
-1. **NelM** instalado e configurado
+1. **Nelm** instalado e configurado
 2. **kubectl** configurado com contextos válidos
 3. **Helm charts** válidos no repositório
 4. **Acesso** ao cluster Kubernetes
 
-## 🧪 Testando o Comando
-
-Use o script de teste incluído:
-
-```bash
-# Tornar executável (se necessário)
-chmod +x scripts/test-nelm-commands.sh
-
-# Executar teste completo
-./scripts/test-nelm-commands.sh
-```
-
 ## 🔍 Troubleshooting
 
 ### Erro: "contexto do Kubernetes inválido"
+
 ```bash
 # Verificar contextos disponíveis
 kubectl config get-contexts
@@ -194,6 +152,7 @@ opsmaster nelm install --env stg --kube-context CONTEXTO_VALIDO
 ```
 
 ### Erro: "Chart.yaml não encontrado"
+
 ```bash
 # Verificar se está no diretório correto
 ls -la Chart.yaml
@@ -204,6 +163,7 @@ opsmaster nelm install --env stg --kube-context kubedev
 ```
 
 ### Erro: "falha na validação do chart"
+
 ```bash
 # Verificar sintaxe do Chart.yaml
 nelm chart lint
