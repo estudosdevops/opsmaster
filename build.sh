@@ -26,6 +26,7 @@ if [ $? -eq 0 ]; then
     echo ""
     echo "✅ Build concluído com sucesso!"
     echo "   Binário gerado: ./$BINARY_NAME"
+    echo "   sudo cp $BINARY_NAME /usr/local/bin"
     echo "   Para executar: ./$BINARY_NAME --help"
 else
     echo ""
