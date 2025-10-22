@@ -484,7 +484,7 @@ func (pi *PuppetInstaller) generateDebianScript(certname string, instance *cloud
 set -e
 
 echo "================================================"
-echo "OpsMaster - Installing Puppet Agent on Debian/Ubuntu"
+echo "Installing Puppet Agent on Debian/Ubuntu"
 echo "================================================"
 
 # Detect OS version
@@ -549,7 +549,7 @@ func (pi *PuppetInstaller) generateRHELScript(certname string, instance *cloud.I
 set -e
 
 echo "================================================"
-echo "OpsMaster - Installing Puppet Agent on RHEL/Amazon Linux"
+echo "Installing Puppet Agent on RHEL/Amazon Linux"
 echo "================================================"
 
 # Detect OS version
