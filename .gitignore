@@ -18,6 +18,7 @@ test.sh
 coverage.*
 *.coverprofile
 profile.cov
+*.csv
 
 # Dependency directories (remove the comment below to include it)
 # vendor/

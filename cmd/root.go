@@ -4,6 +4,7 @@ package cmd
 import (
 	"github.com/estudosdevops/opsmaster/cmd/argocd"
 	"github.com/estudosdevops/opsmaster/cmd/get"
+	"github.com/estudosdevops/opsmaster/cmd/install"
 	"github.com/estudosdevops/opsmaster/cmd/nelm"
 	"github.com/estudosdevops/opsmaster/cmd/scan"
 
@@ -34,6 +35,7 @@ func init() {
 	RootCmd.AddCommand(get.GetCmd)
 	RootCmd.AddCommand(argocd.ArgocdCmd)
 	RootCmd.AddCommand(nelm.NelmCmd)
+	RootCmd.AddCommand(install.InstallCmd)
 
 	cobra.OnInitialize(initConfig)
 	RootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "arquivo de configuração (o padrão é $HOME/.opsmaster.yaml)")
