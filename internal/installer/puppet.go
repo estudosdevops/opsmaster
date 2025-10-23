@@ -404,6 +404,83 @@ func (pi *PuppetInstaller) generateFactsScript(instance *cloud.Instance) string 
 	return script.String()
 }
 
+// generateFacterBlocklistScript generates shell script to configure Facter blocklist.
+// This prevents "exceeds the value length limit: 4096" errors caused by oversized facts
+// like ec2_userdata in cloud environments.
+//
+// Creates /etc/puppetlabs/facter/facter.conf with blocklist configuration.
+// The directory is created if it doesn't exist (mkdir -p).
+//
+// Blocklisted facts:
+//   - ec2_userdata: EC2 user data can exceed 4KB (often contains cloud-init scripts)
+//   - ec2_metadata: EC2 metadata can be large in some AWS configurations
+//
+// Returns bash script ready to be inserted into installation script.
+func (*PuppetInstaller) generateFacterBlocklistScript() string {
+	return `# Configure Facter blocklist to prevent oversized facts errors
+echo "Configuring Facter blocklist..."
+mkdir -p /etc/puppetlabs/facter
+cat > /etc/puppetlabs/facter/facter.conf <<EOF
+facts:
+  blocklist:
+    - "ec2_userdata"
+    - "ec2_metadata"
+EOF
+echo "  ✓ Facter blocklist configured"
+`
+}
+
+// generatePuppetConfigScript generates shell script to configure puppet.conf.
+// This is common to both Debian and RHEL installation scripts.
+//
+// Creates /etc/puppetlabs/puppet/puppet.conf with agent configuration:
+//   - server: Puppet Server hostname
+//   - environment: Puppet environment (production, staging, etc.)
+//   - certname: Unique certname for this agent
+//   - runinterval: How often agent checks for updates (default: 1h)
+//
+// Returns bash script with formatted puppet.conf content.
+func (pi *PuppetInstaller) generatePuppetConfigScript(certname string) string {
+	return fmt.Sprintf(`# Configure Puppet
+echo "Configuring Puppet Agent..."
+cat > /etc/puppetlabs/puppet/puppet.conf <<EOF
+[agent]
+server = %s
+environment = %s
+certname = %s
+runinterval = 1h
+EOF
+
+echo "Puppet configured with:"
+echo "  Server: %s"
+echo "  Environment: %s"
+echo "  Certname: %s"
+`, pi.puppetServer, pi.environment, certname,
+		pi.puppetServer, pi.environment, certname)
+}
+
+// generatePuppetRunScript generates shell script to run initial Puppet agent.
+// This is common to both Debian and RHEL installation scripts.
+//
+// Executes puppet agent with:
+//   - --test: Run in foreground (not as service)
+//   - --waitforcert 60: Wait up to 60 seconds for certificate signing
+//   - || true: Don't fail if puppet run has errors (common on first run)
+//
+// Returns bash script that runs puppet agent and reports version.
+func (*PuppetInstaller) generatePuppetRunScript() string {
+	return `# Run initial puppet agent (will request certificate)
+echo "Running initial Puppet agent..."
+/opt/puppetlabs/bin/puppet agent --test --waitforcert 60 || true
+
+# Check puppet version
+PUPPET_VERSION=$(/opt/puppetlabs/bin/puppet --version)
+echo "================================================"
+echo "Puppet Agent ${PUPPET_VERSION} installed successfully!"
+echo "================================================"
+`
+}
+
 // ValidatePrerequisites validates prerequisites before installation.
 // For Puppet, we check:
 // 1. Instance is accessible (SSM connectivity)
@@ -477,8 +554,11 @@ func (pi *PuppetInstaller) GenerateInstallScript(os string, _ map[string]string)
 // generateDebianScript generates installation script for Debian/Ubuntu.
 // Includes custom Facter facts creation if configured.
 func (pi *PuppetInstaller) generateDebianScript(certname string, instance *cloud.Instance) string {
-	// Generate custom facts script (empty string if no facts configured)
+	// Generate script components (reusable across Debian/RHEL)
 	factsScript := pi.generateFactsScript(instance)
+	facterBlocklist := pi.generateFacterBlocklistScript()
+	puppetConfig := pi.generatePuppetConfigScript(certname)
+	puppetRun := pi.generatePuppetRunScript()
 
 	return fmt.Sprintf(`#!/bin/bash
 set -e
@@ -511,39 +591,22 @@ apt-get update -qq
 # Install puppet-agent
 echo "Installing puppet-agent package..."
 DEBIAN_FRONTEND=noninteractive apt-get install -y puppet-agent
+
 %s
-# Configure Puppet
-echo "Configuring Puppet Agent..."
-cat > /etc/puppetlabs/puppet/puppet.conf <<EOF
-[agent]
-server = %s
-environment = %s
-certname = %s
-runinterval = 1h
-EOF
-
-echo "Puppet configured with:"
-echo "  Server: %s"
-echo "  Environment: %s"
-echo "  Certname: %s"
-
-# Run initial puppet agent (will request certificate)
-echo "Running initial Puppet agent..."
-/opt/puppetlabs/bin/puppet agent --test --waitforcert 60 || true
-
-# Check puppet version
-PUPPET_VERSION=$(/opt/puppetlabs/bin/puppet --version)
-echo "================================================"
-echo "Puppet Agent ${PUPPET_VERSION} installed successfully!"
-echo "================================================"
-`, pi.puppetVersion, pi.puppetVersion, factsScript, pi.puppetServer, pi.environment, certname, pi.puppetServer, pi.environment, certname)
+%s
+%s
+%s
+`, pi.puppetVersion, pi.puppetVersion, facterBlocklist, factsScript, puppetConfig, puppetRun)
 }
 
 // generateRHELScript generates installation script for RHEL/CentOS/Amazon Linux.
 // Includes custom Facter facts creation if configured.
 func (pi *PuppetInstaller) generateRHELScript(certname string, instance *cloud.Instance) string {
-	// Generate custom facts script (empty string if no facts configured)
+	// Generate script components (reusable across Debian/RHEL)
 	factsScript := pi.generateFactsScript(instance)
+	facterBlocklist := pi.generateFacterBlocklistScript()
+	puppetConfig := pi.generatePuppetConfigScript(certname)
+	puppetRun := pi.generatePuppetRunScript()
 
 	return fmt.Sprintf(`#!/bin/bash
 set -e
@@ -577,32 +640,12 @@ rpm -Uvh "https://yum.puppet.com/${REPO_RPM}" 2>/dev/null || echo "Repository al
 # Install puppet-agent
 echo "Installing puppet-agent package..."
 yum install -y puppet-agent
+
 %s
-# Configure Puppet
-echo "Configuring Puppet Agent..."
-cat > /etc/puppetlabs/puppet/puppet.conf <<EOF
-[agent]
-server = %s
-environment = %s
-certname = %s
-runinterval = 1h
-EOF
-
-echo "Puppet configured with:"
-echo "  Server: %s"
-echo "  Environment: %s"
-echo "  Certname: %s"
-
-# Run initial puppet agent (will request certificate)
-echo "Running initial Puppet agent..."
-/opt/puppetlabs/bin/puppet agent --test --waitforcert 60 || true
-
-# Check puppet version
-PUPPET_VERSION=$(/opt/puppetlabs/bin/puppet --version)
-echo "================================================"
-echo "Puppet Agent ${PUPPET_VERSION} installed successfully!"
-echo "================================================"
-`, pi.puppetVersion, pi.puppetVersion, factsScript, pi.puppetServer, pi.environment, certname, pi.puppetServer, pi.environment, certname)
+%s
+%s
+%s
+`, pi.puppetVersion, pi.puppetVersion, facterBlocklist, factsScript, puppetConfig, puppetRun)
 }
 
 // VerifyInstallation verifies that Puppet was installed successfully.

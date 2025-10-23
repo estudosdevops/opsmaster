@@ -4,14 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 
 	"github.com/estudosdevops/opsmaster/internal/cloud"
-	"github.com/estudosdevops/opsmaster/internal/cloud/aws"
+	"github.com/estudosdevops/opsmaster/internal/cloud/provider"
 	"github.com/estudosdevops/opsmaster/internal/csv"
 	"github.com/estudosdevops/opsmaster/internal/executor"
 	"github.com/estudosdevops/opsmaster/internal/installer"
@@ -177,14 +175,28 @@ func runPuppetInstall(cmd *cobra.Command, args []string) error {
 	// STEP 2: Initialize cloud provider
 	// ============================================================
 	logStep(log, 2, "Initializing cloud provider")
-	log.Info("☁️  Initializing AWS provider")
 
-	provider, err := initializeCloudProvider(ctx, awsProfile)
+	// Detect cloud provider from instances
+	cloudType, err := provider.DetectCloudFromInstances(instances)
 	if err != nil {
-		return fatalError(log, "Failed to initialize cloud provider", err)
+		return fatalError(log, "Failed to detect cloud provider", err)
 	}
 
-	log.Info("✅ Cloud provider initialized", "provider", provider.Name())
+	log.Info("☁️  Detected cloud provider", "cloud", cloudType)
+
+	// Create provider using factory
+	var providerOptions []provider.Option
+	if awsProfile != "" {
+		providerOptions = append(providerOptions, provider.WithProfile(awsProfile))
+		log.Info("   Using AWS profile", "profile", awsProfile)
+	}
+
+	cloudProvider, err := provider.NewProvider(cloudType, providerOptions...)
+	if err != nil {
+		return fatalError(log, "Failed to create cloud provider", err)
+	}
+
+	log.Info("✅ Cloud provider initialized", "provider", cloudProvider.Name())
 
 	// ============================================================
 	// STEP 3: Load custom facts configuration
@@ -195,7 +207,7 @@ func runPuppetInstall(cmd *cobra.Command, args []string) error {
 
 	if customFactsFile != "" {
 		// Load custom facts from YAML file
-		customFacts, err = loadCustomFacts(customFactsFile)
+		customFacts, err = installer.LoadCustomFactsFromYAML(customFactsFile)
 		if err != nil {
 			return fatalError(log, "Failed to load custom facts", err)
 		}
@@ -216,14 +228,14 @@ func runPuppetInstall(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		// Use default custom facts (location.yaml)
-		customFacts = getDefaultCustomFacts()
+		customFacts = installer.GetDefaultCustomFacts()
 		log.Info("✅ Using default custom facts (no --custom-facts flag provided)")
 		log.Info("   → location.yaml will be created with: account, environment, region")
 	}
 
 	// Validate that CSV columns required by facts exist
 	if len(instances) > 0 {
-		validateCustomFactsCSVColumns(log, customFacts, instances[0])
+		installer.LogMissingFactColumns(log, customFacts, instances[0])
 	}
 
 	// ============================================================
@@ -273,7 +285,7 @@ func runPuppetInstall(cmd *cobra.Command, args []string) error {
 
 	// Create parallel executor
 	exec := executor.NewParallelExecutor(executor.ExecutorConfig{
-		Provider:       provider,
+		Provider:       cloudProvider,
 		Installer:      puppetInstaller,
 		MaxConcurrency: maxConcurrency,
 		SkipValidation: skipValidation,
@@ -330,18 +342,6 @@ func parseInstancesFile(filePath string) ([]*cloud.Instance, error) {
 	}
 
 	return instances, nil
-}
-
-// initializeCloudProvider initializes cloud provider based on instances
-// Currently supports AWS only, but designed to be extensible
-func initializeCloudProvider(ctx context.Context, profile string) (cloud.CloudProvider, error) {
-	// For now, we only support AWS
-	// In the future, we can detect cloud from CSV and initialize accordingly
-
-	// Create AWS provider (no error return, just creates the provider)
-	awsProvider := aws.NewAWSProvider()
-
-	return awsProvider, nil
 }
 
 // printInstanceMetadata prints metadata information for an instance.
@@ -439,125 +439,5 @@ func printResults(result *executor.AggregatedResult) {
 		}
 
 		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	}
-}
-
-// loadCustomFacts loads custom fact definitions from YAML file.
-// Returns map of fact definitions or error if file cannot be read/parsed.
-//
-// Expected YAML format:
-//
-//	location:
-//	  file_path: "location.yaml"
-//	  fact_name: "location"
-//	  fields:
-//	    account: "account"
-//	    environment: "environment"
-//	    region: "region"
-//	compliance:
-//	  file_path: "compliance.yaml"
-//	  fact_name: "compliance"
-//	  fields:
-//	    compliance_level: "level"
-//	    data_classification: "classification"
-func loadCustomFacts(filepath string) (map[string]installer.FactDefinition, error) {
-	// Read YAML file
-	data, err := os.ReadFile(filepath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read custom facts file: %w", err)
-	}
-
-	// Parse YAML into intermediate structure
-	var rawFacts map[string]struct {
-		FilePath string            `yaml:"file_path"`
-		FactName string            `yaml:"fact_name"`
-		Fields   map[string]string `yaml:"fields"`
-	}
-
-	if err := yaml.Unmarshal(data, &rawFacts); err != nil {
-		return nil, fmt.Errorf("failed to parse custom facts YAML: %w", err)
-	}
-
-	// Validate and convert to FactDefinition map
-	facts := make(map[string]installer.FactDefinition)
-	for key, raw := range rawFacts {
-		// Validate required fields
-		if raw.FilePath == "" {
-			return nil, fmt.Errorf("fact '%s': file_path is required", key)
-		}
-		if raw.FactName == "" {
-			return nil, fmt.Errorf("fact '%s': fact_name is required", key)
-		}
-		if len(raw.Fields) == 0 {
-			return nil, fmt.Errorf("fact '%s': at least one field mapping is required", key)
-		}
-
-		facts[key] = installer.FactDefinition{
-			FilePath: raw.FilePath,
-			FactName: raw.FactName,
-			Fields:   raw.Fields,
-		}
-	}
-
-	// Ensure at least one fact was defined
-	if len(facts) == 0 {
-		return nil, fmt.Errorf("no custom facts defined in file")
-	}
-
-	return facts, nil
-}
-
-// validateCustomFactsCSVColumns checks if CSV has all columns referenced in custom facts.
-// Emits warnings for missing columns that will result in empty fact fields.
-func validateCustomFactsCSVColumns(log *slog.Logger, facts map[string]installer.FactDefinition, sampleInstance *cloud.Instance) {
-	// Collect all CSV columns referenced in facts
-	requiredColumns := make(map[string]bool)
-	for _, factDef := range facts {
-		for csvColumn := range factDef.Fields {
-			requiredColumns[csvColumn] = true
-		}
-	}
-
-	// Check each required column
-	missingColumns := []string{}
-	for column := range requiredColumns {
-		// Standard columns (always available)
-		if column == "account" || column == "region" {
-			continue
-		}
-
-		// Check if column exists in instance metadata
-		if sampleInstance.Metadata == nil || sampleInstance.Metadata[column] == "" {
-			missingColumns = append(missingColumns, column)
-		}
-	}
-
-	// Warn about missing columns
-	if len(missingColumns) > 0 {
-		log.Warn("⚠️  Some custom fact columns are missing or empty in CSV",
-			"missing_columns", missingColumns,
-		)
-		log.Warn("   → These fact fields will be empty or omitted in generated facts")
-	}
-}
-
-// getDefaultCustomFacts returns default custom facts configuration.
-// Creates a location.yaml fact with standard fields from CSV.
-//
-// Default fact mapping:
-//   - account (CSV) → account (fact field)
-//   - environment (CSV metadata) → environment (fact field)
-//   - region (CSV) → region (fact field)
-func getDefaultCustomFacts() map[string]installer.FactDefinition {
-	return map[string]installer.FactDefinition{
-		"location": {
-			FilePath: "location.yaml",
-			FactName: "location",
-			Fields: map[string]string{
-				"account":     "account",
-				"environment": "environment",
-				"region":      "region",
-			},
-		},
 	}
 }

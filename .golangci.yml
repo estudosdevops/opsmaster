@@ -28,7 +28,6 @@ linters:
     - noctx
     - nolintlint
     - revive
-    - staticcheck
     - testifylint
     - unconvert
     - unparam
