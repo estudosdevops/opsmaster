@@ -424,7 +424,6 @@ cat > /etc/puppetlabs/facter/facter.conf <<EOF
 facts:
   blocklist:
     - "ec2_userdata"
-    - "ec2_metadata"
 EOF
 echo "  ✓ Facter blocklist configured"
 `
