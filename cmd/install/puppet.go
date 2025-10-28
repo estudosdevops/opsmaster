@@ -4,18 +4,18 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 
 	"github.com/estudosdevops/opsmaster/internal/cloud"
-	"github.com/estudosdevops/opsmaster/internal/cloud/aws"
+	"github.com/estudosdevops/opsmaster/internal/cloud/provider"
 	"github.com/estudosdevops/opsmaster/internal/csv"
 	"github.com/estudosdevops/opsmaster/internal/executor"
 	"github.com/estudosdevops/opsmaster/internal/installer"
 	"github.com/estudosdevops/opsmaster/internal/logger"
+	"github.com/estudosdevops/opsmaster/internal/presenter"
 )
 
 // Puppet command flags
@@ -177,14 +177,28 @@ func runPuppetInstall(cmd *cobra.Command, args []string) error {
 	// STEP 2: Initialize cloud provider
 	// ============================================================
 	logStep(log, 2, "Initializing cloud provider")
-	log.Info("☁️  Initializing AWS provider")
 
-	provider, err := initializeCloudProvider(ctx, awsProfile)
+	// Detect cloud provider from instances
+	cloudType, err := provider.DetectCloudFromInstances(instances)
 	if err != nil {
-		return fatalError(log, "Failed to initialize cloud provider", err)
+		return fatalError(log, "Failed to detect cloud provider", err)
 	}
 
-	log.Info("✅ Cloud provider initialized", "provider", provider.Name())
+	log.Info("☁️  Detected cloud provider", "cloud", cloudType)
+
+	// Create provider using factory
+	var providerOptions []provider.Option
+	if awsProfile != "" {
+		providerOptions = append(providerOptions, provider.WithProfile(awsProfile))
+		log.Info("   Using AWS profile", "profile", awsProfile)
+	}
+
+	cloudProvider, err := provider.NewProvider(cloudType, providerOptions...)
+	if err != nil {
+		return fatalError(log, "Failed to create cloud provider", err)
+	}
+
+	log.Info("✅ Cloud provider initialized", "provider", cloudProvider.Name())
 
 	// ============================================================
 	// STEP 3: Load custom facts configuration
@@ -195,7 +209,7 @@ func runPuppetInstall(cmd *cobra.Command, args []string) error {
 
 	if customFactsFile != "" {
 		// Load custom facts from YAML file
-		customFacts, err = loadCustomFacts(customFactsFile)
+		customFacts, err = installer.LoadCustomFactsFromYAML(customFactsFile)
 		if err != nil {
 			return fatalError(log, "Failed to load custom facts", err)
 		}
@@ -216,14 +230,14 @@ func runPuppetInstall(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		// Use default custom facts (location.yaml)
-		customFacts = getDefaultCustomFacts()
+		customFacts = installer.GetDefaultCustomFacts()
 		log.Info("✅ Using default custom facts (no --custom-facts flag provided)")
 		log.Info("   → location.yaml will be created with: account, environment, region")
 	}
 
 	// Validate that CSV columns required by facts exist
 	if len(instances) > 0 {
-		validateCustomFactsCSVColumns(log, customFacts, instances[0])
+		installer.LogMissingFactColumns(log, customFacts, instances[0])
 	}
 
 	// ============================================================
@@ -273,7 +287,7 @@ func runPuppetInstall(cmd *cobra.Command, args []string) error {
 
 	// Create parallel executor
 	exec := executor.NewParallelExecutor(executor.ExecutorConfig{
-		Provider:       provider,
+		Provider:       cloudProvider,
 		Installer:      puppetInstaller,
 		MaxConcurrency: maxConcurrency,
 		SkipValidation: skipValidation,
@@ -332,232 +346,175 @@ func parseInstancesFile(filePath string) ([]*cloud.Instance, error) {
 	return instances, nil
 }
 
-// initializeCloudProvider initializes cloud provider based on instances
-// Currently supports AWS only, but designed to be extensible
-func initializeCloudProvider(ctx context.Context, profile string) (cloud.CloudProvider, error) {
-	// For now, we only support AWS
-	// In the future, we can detect cloud from CSV and initialize accordingly
+// prepareResultRows converts AggregatedResult to table rows for presenter.PrintTable.
+// Returns header ([]string) and rows ([][]string) with formatted data.
+//
+// Columns:
+//   - Instance ID: Instance identifier
+//   - Account: AWS account number
+//   - Region: AWS region
+//   - Status: ✅ Success, ❌ Failed, ⏭️ Skipped
+//   - Certname: Puppet certname (with (*) if preserved)
+//   - OS: Operating system (debian/rhel)
+//   - Duration: Installation time in human-readable format
+//   - Error: Error message for failed installations (empty for success)
+func prepareResultRows(result *executor.AggregatedResult) (header []string, rows [][]string) {
+	// Define headers (UPPERCASE for professional look)
+	header = []string{
+		"INSTANCE ID",
+		"ACCOUNT",
+		"REGION",
+		"STATUS",
+		"CERTNAME",
+		"OS",
+		"DURATION",
+		"ERROR",
+	}
 
-	// Create AWS provider (no error return, just creates the provider)
-	awsProvider := aws.NewAWSProvider()
+	// Convert results to rows
+	rows = [][]string{}
+	for _, r := range result.Results {
+		row := []string{
+			r.Instance.ID,
+			r.Instance.Account,
+			r.Instance.Region,
+			getStatusEmoji(r.Status),
+			getCertnameDisplay(r.Metadata),
+			r.Metadata["os"],
+			formatDuration(r.Duration),
+			formatError(r),
+		}
+		rows = append(rows, row)
+	}
 
-	return awsProvider, nil
+	return header, rows
 }
 
-// printInstanceMetadata prints metadata information for an instance.
-// This centralizes metadata display logic to avoid duplication between
-// successful and failed installation reports.
-//
-// Metadata includes:
-//   - OS type (debian/rhel)
-//   - Certname used for Puppet
-//   - Whether certname was preserved from previous installation
-func printInstanceMetadata(metadata map[string]string) {
-	if metadata == nil {
-		return
+// getStatusEmoji returns emoji representation of execution status.
+func getStatusEmoji(status executor.ExecutionStatus) string {
+	switch status {
+	case executor.StatusSuccess:
+		return "✅"
+	case executor.StatusFailed:
+		return "❌"
+	case executor.StatusSkipped:
+		return "⏭️"
+	default:
+		return "❓"
+	}
+}
+
+// getCertnameDisplay formats certname with (*) marker if preserved.
+func getCertnameDisplay(metadata map[string]string) string {
+	certname := metadata["certname"]
+	if certname == "" {
+		return "-"
 	}
 
-	// Print OS type if available
-	if os := metadata["os"]; os != "" {
-		fmt.Printf("    OS: %s\n", os)
+	// Add marker if certname was preserved
+	if metadata["certname_preserved"] == "true" {
+		return certname + " (*)"
 	}
 
-	// Print certname if available
-	if certname := metadata["certname"]; certname != "" {
-		fmt.Printf("    Certname: %s\n", certname)
+	return certname
+}
 
-		// Indicate if certname was preserved from previous installation
-		if preserved := metadata["certname_preserved"]; preserved == "true" {
-			fmt.Printf("    (Certname preserved from previous installation)\n")
-		}
+// formatDuration formats duration in human-readable format (45s, 1m30s, etc.)
+func formatDuration(d time.Duration) string {
+	if d == 0 {
+		return "-"
 	}
+
+	seconds := int(d.Seconds())
+	if seconds < 60 {
+		return fmt.Sprintf("%ds", seconds)
+	}
+
+	minutes := seconds / 60
+	seconds = seconds % 60
+	if seconds == 0 {
+		return fmt.Sprintf("%dm", minutes)
+	}
+
+	return fmt.Sprintf("%dm%ds", minutes, seconds)
+}
+
+// formatError formats error message for table display.
+// Returns empty string for successful installations, first line of error for failed ones.
+// Multi-line errors are truncated to first line for table compactness.
+func formatError(r *executor.ExecutionResult) string {
+	// Success/Skipped = no error message
+	if r.Status != executor.StatusFailed {
+		return ""
+	}
+
+	// Get error
+	err := r.GetError()
+	if err == nil {
+		return "Unknown error"
+	}
+
+	// Extract first line only (for table readability)
+	errMsg := err.Error()
+	lines := strings.Split(errMsg, "\n")
+	if len(lines) > 0 && strings.TrimSpace(lines[0]) != "" {
+		return strings.TrimSpace(lines[0])
+	}
+
+	return errMsg
 }
 
 // printResults prints detailed results to console
 func printResults(result *executor.AggregatedResult) {
-	// Print successful installations
-	if len(result.Results) > 0 {
-		fmt.Println("\n" + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-		fmt.Println("📋 Detailed Results")
-		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-
-		// Group by status
-		successful := []*executor.ExecutionResult{}
-		failed := []*executor.ExecutionResult{}
-		skipped := []*executor.ExecutionResult{}
-
-		for _, r := range result.Results {
-			switch r.Status {
-			case executor.StatusSuccess:
-				successful = append(successful, r)
-			case executor.StatusFailed:
-				failed = append(failed, r)
-			case executor.StatusSkipped:
-				skipped = append(skipped, r)
-			}
-		}
-
-		// Print successful
-		if len(successful) > 0 {
-			fmt.Println("\n✅ Successful Installations:")
-			for _, r := range successful {
-				fmt.Printf("  • %s (%s/%s)\n", r.Instance.ID, r.Instance.Account, r.Instance.Region)
-
-				// Print metadata (OS, certname, etc)
-				printInstanceMetadata(r.Metadata)
-
-				// Print duration
-				duration := r.Duration.Round(time.Second)
-				fmt.Printf("    Duration: %s\n", duration)
-			}
-		}
-
-		// Print failed
-		if len(failed) > 0 {
-			fmt.Println("\n❌ Failed Installations:")
-			for _, r := range failed {
-				fmt.Printf("  • %s (%s/%s)\n", r.Instance.ID, r.Instance.Account, r.Instance.Region)
-
-				// Print metadata (shows detected OS even on failure)
-				printInstanceMetadata(r.Metadata)
-
-				if err := r.GetError(); err != nil {
-					fmt.Printf("    Error: %s\n", err)
-				}
-			}
-		}
-
-		// Print skipped
-		if len(skipped) > 0 {
-			fmt.Println("\n⏭️  Skipped Installations:")
-			for _, r := range skipped {
-				fmt.Printf("  • %s (%s/%s)\n", r.Instance.ID, r.Instance.Account, r.Instance.Region)
-				if err := r.GetError(); err != nil {
-					fmt.Printf("    Reason: %s\n", err)
-				}
-			}
-		}
-
-		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	if len(result.Results) == 0 {
+		return
 	}
+
+	// Print header
+	fmt.Println("\n# DETAILED RESULTS:")
+
+	// Prepare data for table
+	header, rows := prepareResultRows(result)
+
+	// Render table with borders using presenter
+	presenter.PrintTable(header, rows)
+
+	// Print footnotes
+	if hasCertnamePreserved(result) {
+		fmt.Println("\n(*) Certname preserved from previous installation")
+	}
+
+	// Print summary
+	printSummary(result)
 }
 
-// loadCustomFacts loads custom fact definitions from YAML file.
-// Returns map of fact definitions or error if file cannot be read/parsed.
-//
-// Expected YAML format:
-//
-//	location:
-//	  file_path: "location.yaml"
-//	  fact_name: "location"
-//	  fields:
-//	    account: "account"
-//	    environment: "environment"
-//	    region: "region"
-//	compliance:
-//	  file_path: "compliance.yaml"
-//	  fact_name: "compliance"
-//	  fields:
-//	    compliance_level: "level"
-//	    data_classification: "classification"
-func loadCustomFacts(filepath string) (map[string]installer.FactDefinition, error) {
-	// Read YAML file
-	data, err := os.ReadFile(filepath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read custom facts file: %w", err)
-	}
-
-	// Parse YAML into intermediate structure
-	var rawFacts map[string]struct {
-		FilePath string            `yaml:"file_path"`
-		FactName string            `yaml:"fact_name"`
-		Fields   map[string]string `yaml:"fields"`
-	}
-
-	if err := yaml.Unmarshal(data, &rawFacts); err != nil {
-		return nil, fmt.Errorf("failed to parse custom facts YAML: %w", err)
-	}
-
-	// Validate and convert to FactDefinition map
-	facts := make(map[string]installer.FactDefinition)
-	for key, raw := range rawFacts {
-		// Validate required fields
-		if raw.FilePath == "" {
-			return nil, fmt.Errorf("fact '%s': file_path is required", key)
-		}
-		if raw.FactName == "" {
-			return nil, fmt.Errorf("fact '%s': fact_name is required", key)
-		}
-		if len(raw.Fields) == 0 {
-			return nil, fmt.Errorf("fact '%s': at least one field mapping is required", key)
-		}
-
-		facts[key] = installer.FactDefinition{
-			FilePath: raw.FilePath,
-			FactName: raw.FactName,
-			Fields:   raw.Fields,
+// hasCertnamePreserved checks if any instance had certname preserved.
+func hasCertnamePreserved(result *executor.AggregatedResult) bool {
+	for _, r := range result.Results {
+		if r.Metadata["certname_preserved"] == "true" {
+			return true
 		}
 	}
-
-	// Ensure at least one fact was defined
-	if len(facts) == 0 {
-		return nil, fmt.Errorf("no custom facts defined in file")
-	}
-
-	return facts, nil
+	return false
 }
 
-// validateCustomFactsCSVColumns checks if CSV has all columns referenced in custom facts.
-// Emits warnings for missing columns that will result in empty fact fields.
-func validateCustomFactsCSVColumns(log *slog.Logger, facts map[string]installer.FactDefinition, sampleInstance *cloud.Instance) {
-	// Collect all CSV columns referenced in facts
-	requiredColumns := make(map[string]bool)
-	for _, factDef := range facts {
-		for csvColumn := range factDef.Fields {
-			requiredColumns[csvColumn] = true
+// printSummary prints execution summary with counts and total duration.
+func printSummary(result *executor.AggregatedResult) {
+	successCount := 0
+	failedCount := 0
+	skippedCount := 0
+
+	for _, r := range result.Results {
+		switch r.Status {
+		case executor.StatusSuccess:
+			successCount++
+		case executor.StatusFailed:
+			failedCount++
+		case executor.StatusSkipped:
+			skippedCount++
 		}
 	}
 
-	// Check each required column
-	missingColumns := []string{}
-	for column := range requiredColumns {
-		// Standard columns (always available)
-		if column == "account" || column == "region" {
-			continue
-		}
-
-		// Check if column exists in instance metadata
-		if sampleInstance.Metadata == nil || sampleInstance.Metadata[column] == "" {
-			missingColumns = append(missingColumns, column)
-		}
-	}
-
-	// Warn about missing columns
-	if len(missingColumns) > 0 {
-		log.Warn("⚠️  Some custom fact columns are missing or empty in CSV",
-			"missing_columns", missingColumns,
-		)
-		log.Warn("   → These fact fields will be empty or omitted in generated facts")
-	}
-}
-
-// getDefaultCustomFacts returns default custom facts configuration.
-// Creates a location.yaml fact with standard fields from CSV.
-//
-// Default fact mapping:
-//   - account (CSV) → account (fact field)
-//   - environment (CSV metadata) → environment (fact field)
-//   - region (CSV) → region (fact field)
-func getDefaultCustomFacts() map[string]installer.FactDefinition {
-	return map[string]installer.FactDefinition{
-		"location": {
-			FilePath: "location.yaml",
-			FactName: "location",
-			Fields: map[string]string{
-				"account":     "account",
-				"environment": "environment",
-				"region":      "region",
-			},
-		},
-	}
+	fmt.Printf("\n📊 Summary: %d successful, %d failed, %d skipped\n",
+		successCount, failedCount, skippedCount)
 }

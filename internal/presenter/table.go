@@ -1,43 +1,52 @@
 package presenter
 
 import (
-	"fmt"
 	"os"
-	"text/tabwriter"
+
+	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/renderer"
+	"github.com/olekukonko/tablewriter/tw"
 )
 
-// PrintTable formata e imprime dados em uma tabela no console.
-// Ela recebe o cabeçalho e as linhas como fatias de strings.
+// PrintTable formats and prints data in a table to the console with rounded Unicode borders.
+// It receives the header and rows as slices of strings.
+//
+// Uses the modern tablewriter API with StyleRounded for professional rounded borders:
+//
+//	╭─────────────┬─────────┬────────╮
+//	│ INSTANCE ID │ ACCOUNT │ STATUS │
+//	├─────────────┼─────────┼────────┤
+//	│ i-123       │ 111111  │ ✅     │
+//	╰─────────────┴─────────┴────────╯
+//
+// This implementation uses tablewriter.NewTable (modern API) instead of
+// tablewriter.NewWriter (legacy API) to access advanced rendering features
+// like rounded corners via tw.StyleRounded symbols.
 func PrintTable(header []string, rows [][]string) {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	// Create table with rounded border style
+	table := tablewriter.NewTable(os.Stdout,
+		tablewriter.WithRenderer(renderer.NewBlueprint(tw.Rendition{
+			Symbols: tw.NewSymbols(tw.StyleRounded),
+		})),
+		tablewriter.WithConfig(tablewriter.Config{
+			Header: tw.CellConfig{
+				Formatting: tw.CellFormatting{AutoFormat: tw.On},
+				Alignment:  tw.CellAlignment{Global: tw.AlignLeft},
+			},
+			Row: tw.CellConfig{
+				Alignment: tw.CellAlignment{Global: tw.AlignLeft},
+			},
+		}),
+	)
 
-	// Imprime o cabeçalho
-	headerStr := ""
-	separatorStr := ""
-	for i, col := range header {
-		headerStr += col
-		// Cria a linha separadro (ex: "----- ) com o mesmo tamanho do cabeçalho
-		for range len(col) {
-			separatorStr += "-"
-		}
-		if i < len(header)-1 {
-			headerStr += "\t"
-			separatorStr += "\t"
-		}
-	}
-	fmt.Fprintln(w, headerStr)
-	fmt.Fprintln(w, separatorStr)
+	// Set header
+	table.Header(header)
 
-	// Imprime as linhas de dados
+	// Add rows
 	for _, row := range rows {
-		rowStr := ""
-		for i, cell := range row {
-			rowStr += cell
-			if i < len(row)-1 {
-				rowStr += "\t"
-			}
-		}
-		fmt.Fprintf(w, "%s\n", rowStr)
+		_ = table.Append(row) // Error explicitly ignored (cosmetic operation)
 	}
-	w.Flush()
+
+	// Render table
+	_ = table.Render() // Error explicitly ignored (writes to stdout)
 }
