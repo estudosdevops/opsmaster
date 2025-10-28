@@ -146,11 +146,12 @@ func (*PuppetInstaller) Name() string {
 // GenerateInstallScriptWithAutoDetect generates installation script with automatic OS detection.
 // This is a convenience method that detects the OS and then calls GenerateInstallScript.
 // Use this method when you want automatic OS detection instead of providing it manually.
-func (pi *PuppetInstaller) GenerateInstallScriptWithAutoDetect(ctx context.Context, instance *cloud.Instance, provider cloud.CloudProvider, _ map[string]string) ([]string, error) {
+// Returns: (commands, metadata, error) where metadata contains os, certname, and certname_preserved.
+func (pi *PuppetInstaller) GenerateInstallScriptWithAutoDetect(ctx context.Context, instance *cloud.Instance, provider cloud.CloudProvider, _ map[string]string) (commands []string, metadata map[string]string, err error) {
 	// Step 1: Detect OS
 	detectedOS, err := pi.detectOS(ctx, instance, provider)
 	if err != nil {
-		return nil, fmt.Errorf("failed to detect OS: %w", err)
+		return nil, nil, fmt.Errorf("failed to detect OS: %w", err)
 	}
 
 	// Step 2: Check if puppet.conf already exists with certname
@@ -174,8 +175,8 @@ func (pi *PuppetInstaller) GenerateInstallScriptWithAutoDetect(ctx context.Conte
 		certnamePreserved = false
 	}
 
-	// Step 4: Store metadata for reporting
-	pi.lastMetadata = map[string]string{
+	// Step 4: Create metadata for THIS execution (not stored in shared variable to avoid race condition)
+	metadata = map[string]string{
 		"os":                 detectedOS,
 		"certname":           certname,
 		"certname_preserved": fmt.Sprintf("%v", certnamePreserved),
@@ -184,7 +185,7 @@ func (pi *PuppetInstaller) GenerateInstallScriptWithAutoDetect(ctx context.Conte
 	// Step 5: Normalize OS type
 	normalizedOS, err := normalizeOS(detectedOS)
 	if err != nil {
-		return nil, fmt.Errorf("failed to normalize OS type: %w", err)
+		return nil, nil, fmt.Errorf("failed to normalize OS type: %w", err)
 	}
 
 	// Step 6: Generate script with certname and custom facts based on normalized OS type
@@ -196,10 +197,10 @@ func (pi *PuppetInstaller) GenerateInstallScriptWithAutoDetect(ctx context.Conte
 		script = pi.generateRHELScript(certname, instance)
 	default:
 		// This should never happen if normalizeOS works correctly
-		return nil, fmt.Errorf("internal error: unexpected normalized OS type: %s", normalizedOS)
+		return nil, nil, fmt.Errorf("internal error: unexpected normalized OS type: %s", normalizedOS)
 	}
 
-	return []string{script}, nil
+	return []string{script}, metadata, nil
 }
 
 // detectOS detects the operating system of the instance via remote command execution.
@@ -421,9 +422,9 @@ func (*PuppetInstaller) generateFacterBlocklistScript() string {
 echo "Configuring Facter blocklist..."
 mkdir -p /etc/puppetlabs/facter
 cat > /etc/puppetlabs/facter/facter.conf <<EOF
-facts:
-  blocklist:
-    - "ec2_userdata"
+facts : {
+  blocklist : [ "ec2_userdata" ]
+}
 EOF
 echo "  ✓ Facter blocklist configured"
 `

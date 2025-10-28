@@ -173,14 +173,14 @@ func (pe *ParallelExecutor) validateInstanceAndPrereqs(ctx context.Context, inst
 }
 
 // executeInstallation performs package installation or dry-run simulation.
-// Returns error if installation fails, nil on success.
-func (pe *ParallelExecutor) executeInstallation(ctx context.Context, instance *cloud.Instance) error {
+// Returns (metadata, error). Metadata contains installation details, error if installation fails.
+func (pe *ParallelExecutor) executeInstallation(ctx context.Context, instance *cloud.Instance) (map[string]string, error) {
 	// Dry run mode - simulate installation
 	if pe.dryRun {
 		pe.log.Info("DRY RUN: Would install package",
 			"instance_id", instance.ID,
 			"package", pe.installer.Name())
-		return nil
+		return nil, nil
 	}
 
 	// Actual installation
@@ -188,14 +188,15 @@ func (pe *ParallelExecutor) executeInstallation(ctx context.Context, instance *c
 		"instance_id", instance.ID,
 		"package", pe.installer.Name())
 
-	if err := pe.installPackage(ctx, instance); err != nil {
+	metadata, err := pe.installPackage(ctx, instance)
+	if err != nil {
 		pe.log.Error("Installation failed",
 			"instance_id", instance.ID,
 			"error", err)
-		return fmt.Errorf("installation failed: %w", err)
+		return metadata, fmt.Errorf("installation failed: %w", err)
 	}
 
-	return nil
+	return metadata, nil
 }
 
 // verifyAndTag verifies installation and tags instance with success.
@@ -278,14 +279,18 @@ func (pe *ParallelExecutor) processInstance(ctx context.Context, instance *cloud
 	}
 
 	// STEP 3: Install package (or dry-run)
-	if err := pe.executeInstallation(ctx, instance); err != nil {
+	metadata, err := pe.executeInstallation(ctx, instance)
+	if err != nil {
 		pe.finalizeResult(result, StatusFailed, err)
-		result.Metadata = pe.installer.GetInstallMetadata()
+		result.Metadata = metadata
 		if !pe.skipTagging {
 			pe.tagFailure(ctx, instance, err)
 		}
 		return result
 	}
+
+	// Store metadata from installation
+	result.Metadata = metadata
 
 	// Handle dry-run success early
 	if pe.dryRun {
@@ -302,8 +307,7 @@ func (pe *ParallelExecutor) processInstance(ctx context.Context, instance *cloud
 		return result
 	}
 
-	// STEP 6: Capture installation metadata and finalize
-	result.Metadata = pe.installer.GetInstallMetadata()
+	// STEP 6: Finalize with success (metadata already captured)
 	pe.finalizeResult(result, StatusSuccess, nil)
 
 	pe.log.Info("Instance processed successfully",
@@ -314,14 +318,16 @@ func (pe *ParallelExecutor) processInstance(ctx context.Context, instance *cloud
 }
 
 // installPackage performs the actual package installation.
-func (pe *ParallelExecutor) installPackage(ctx context.Context, instance *cloud.Instance) error {
+// Returns metadata from installation and error if installation fails.
+func (pe *ParallelExecutor) installPackage(ctx context.Context, instance *cloud.Instance) (map[string]string, error) {
 	var commands []string
+	var metadata map[string]string
 	var err error
 
 	// Check if installer supports auto-detection (e.g., PuppetInstaller)
 	// Use type assertion to access GenerateInstallScriptWithAutoDetect if available
 	type autoDetectInstaller interface {
-		GenerateInstallScriptWithAutoDetect(ctx context.Context, instance *cloud.Instance, provider cloud.CloudProvider, options map[string]string) ([]string, error)
+		GenerateInstallScriptWithAutoDetect(ctx context.Context, instance *cloud.Instance, provider cloud.CloudProvider, options map[string]string) ([]string, map[string]string, error)
 	}
 
 	if autoDetect, ok := pe.installer.(autoDetectInstaller); ok {
@@ -343,7 +349,7 @@ func (pe *ParallelExecutor) installPackage(ctx context.Context, instance *cloud.
 			// Generate script WITHOUT remote detection
 			commands, err = pe.installer.GenerateInstallScript(osType, map[string]string{})
 			if err != nil {
-				return fmt.Errorf("failed to generate install script: %w", err)
+				return nil, fmt.Errorf("failed to generate install script: %w", err)
 			}
 
 			pe.log.Info("Dry-run: Installation script generated",
@@ -353,9 +359,9 @@ func (pe *ParallelExecutor) installPackage(ctx context.Context, instance *cloud.
 		} else {
 			// REAL EXECUTION: Use auto-detection
 			pe.log.Info("Detecting OS for installation", "instance_id", instance.ID)
-			commands, err = autoDetect.GenerateInstallScriptWithAutoDetect(ctx, instance, pe.provider, map[string]string{})
+			commands, metadata, err = autoDetect.GenerateInstallScriptWithAutoDetect(ctx, instance, pe.provider, map[string]string{})
 			if err != nil {
-				return fmt.Errorf("failed to generate install script with auto-detect: %w", err)
+				return nil, fmt.Errorf("failed to generate install script with auto-detect: %w", err)
 			}
 		}
 	} else {
@@ -368,7 +374,7 @@ func (pe *ParallelExecutor) installPackage(ctx context.Context, instance *cloud.
 		// Generate installation script
 		commands, err = pe.installer.GenerateInstallScript(osType, map[string]string{})
 		if err != nil {
-			return fmt.Errorf("failed to generate install script: %w", err)
+			return nil, fmt.Errorf("failed to generate install script: %w", err)
 		}
 	}
 
@@ -377,7 +383,7 @@ func (pe *ParallelExecutor) installPackage(ctx context.Context, instance *cloud.
 		pe.log.Info("Dry-run: Skipping installation execution",
 			"instance_id", instance.ID,
 			"package", pe.installer.Name())
-		return nil
+		return metadata, nil
 	}
 
 	// REAL EXECUTION: Execute installation commands
@@ -389,16 +395,16 @@ func (pe *ParallelExecutor) installPackage(ctx context.Context, instance *cloud.
 	installTimeout := 30 * time.Minute
 	result, err := pe.provider.ExecuteCommand(ctx, instance, commands, installTimeout)
 	if err != nil {
-		return fmt.Errorf("failed to execute install commands: %w", err)
+		return metadata, fmt.Errorf("failed to execute install commands: %w", err)
 	}
 
 	// Check if command succeeded
 	if result.ExitCode != 0 {
-		return fmt.Errorf("installation script failed with exit code %d:\nstdout: %s\nstderr: %s",
+		return metadata, fmt.Errorf("installation script failed with exit code %d:\nstdout: %s\nstderr: %s",
 			result.ExitCode, result.Stdout, result.Stderr)
 	}
 
-	return nil
+	return metadata, nil
 }
 
 // tagFailure applies failure tags to instance.

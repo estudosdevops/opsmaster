@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -14,6 +15,7 @@ import (
 	"github.com/estudosdevops/opsmaster/internal/executor"
 	"github.com/estudosdevops/opsmaster/internal/installer"
 	"github.com/estudosdevops/opsmaster/internal/logger"
+	"github.com/estudosdevops/opsmaster/internal/presenter"
 )
 
 // Puppet command flags
@@ -344,100 +346,175 @@ func parseInstancesFile(filePath string) ([]*cloud.Instance, error) {
 	return instances, nil
 }
 
-// printInstanceMetadata prints metadata information for an instance.
-// This centralizes metadata display logic to avoid duplication between
-// successful and failed installation reports.
+// prepareResultRows converts AggregatedResult to table rows for presenter.PrintTable.
+// Returns header ([]string) and rows ([][]string) with formatted data.
 //
-// Metadata includes:
-//   - OS type (debian/rhel)
-//   - Certname used for Puppet
-//   - Whether certname was preserved from previous installation
-func printInstanceMetadata(metadata map[string]string) {
-	if metadata == nil {
-		return
+// Columns:
+//   - Instance ID: Instance identifier
+//   - Account: AWS account number
+//   - Region: AWS region
+//   - Status: ✅ Success, ❌ Failed, ⏭️ Skipped
+//   - Certname: Puppet certname (with (*) if preserved)
+//   - OS: Operating system (debian/rhel)
+//   - Duration: Installation time in human-readable format
+//   - Error: Error message for failed installations (empty for success)
+func prepareResultRows(result *executor.AggregatedResult) (header []string, rows [][]string) {
+	// Define headers (UPPERCASE for professional look)
+	header = []string{
+		"INSTANCE ID",
+		"ACCOUNT",
+		"REGION",
+		"STATUS",
+		"CERTNAME",
+		"OS",
+		"DURATION",
+		"ERROR",
 	}
 
-	// Print OS type if available
-	if os := metadata["os"]; os != "" {
-		fmt.Printf("    OS: %s\n", os)
-	}
-
-	// Print certname if available
-	if certname := metadata["certname"]; certname != "" {
-		fmt.Printf("    Certname: %s\n", certname)
-
-		// Indicate if certname was preserved from previous installation
-		if preserved := metadata["certname_preserved"]; preserved == "true" {
-			fmt.Printf("    (Certname preserved from previous installation)\n")
+	// Convert results to rows
+	rows = [][]string{}
+	for _, r := range result.Results {
+		row := []string{
+			r.Instance.ID,
+			r.Instance.Account,
+			r.Instance.Region,
+			getStatusEmoji(r.Status),
+			getCertnameDisplay(r.Metadata),
+			r.Metadata["os"],
+			formatDuration(r.Duration),
+			formatError(r),
 		}
+		rows = append(rows, row)
 	}
+
+	return header, rows
+}
+
+// getStatusEmoji returns emoji representation of execution status.
+func getStatusEmoji(status executor.ExecutionStatus) string {
+	switch status {
+	case executor.StatusSuccess:
+		return "✅"
+	case executor.StatusFailed:
+		return "❌"
+	case executor.StatusSkipped:
+		return "⏭️"
+	default:
+		return "❓"
+	}
+}
+
+// getCertnameDisplay formats certname with (*) marker if preserved.
+func getCertnameDisplay(metadata map[string]string) string {
+	certname := metadata["certname"]
+	if certname == "" {
+		return "-"
+	}
+
+	// Add marker if certname was preserved
+	if metadata["certname_preserved"] == "true" {
+		return certname + " (*)"
+	}
+
+	return certname
+}
+
+// formatDuration formats duration in human-readable format (45s, 1m30s, etc.)
+func formatDuration(d time.Duration) string {
+	if d == 0 {
+		return "-"
+	}
+
+	seconds := int(d.Seconds())
+	if seconds < 60 {
+		return fmt.Sprintf("%ds", seconds)
+	}
+
+	minutes := seconds / 60
+	seconds = seconds % 60
+	if seconds == 0 {
+		return fmt.Sprintf("%dm", minutes)
+	}
+
+	return fmt.Sprintf("%dm%ds", minutes, seconds)
+}
+
+// formatError formats error message for table display.
+// Returns empty string for successful installations, first line of error for failed ones.
+// Multi-line errors are truncated to first line for table compactness.
+func formatError(r *executor.ExecutionResult) string {
+	// Success/Skipped = no error message
+	if r.Status != executor.StatusFailed {
+		return ""
+	}
+
+	// Get error
+	err := r.GetError()
+	if err == nil {
+		return "Unknown error"
+	}
+
+	// Extract first line only (for table readability)
+	errMsg := err.Error()
+	lines := strings.Split(errMsg, "\n")
+	if len(lines) > 0 && strings.TrimSpace(lines[0]) != "" {
+		return strings.TrimSpace(lines[0])
+	}
+
+	return errMsg
 }
 
 // printResults prints detailed results to console
 func printResults(result *executor.AggregatedResult) {
-	// Print successful installations
-	if len(result.Results) > 0 {
-		fmt.Println("\n" + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-		fmt.Println("📋 Detailed Results")
-		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-
-		// Group by status
-		successful := []*executor.ExecutionResult{}
-		failed := []*executor.ExecutionResult{}
-		skipped := []*executor.ExecutionResult{}
-
-		for _, r := range result.Results {
-			switch r.Status {
-			case executor.StatusSuccess:
-				successful = append(successful, r)
-			case executor.StatusFailed:
-				failed = append(failed, r)
-			case executor.StatusSkipped:
-				skipped = append(skipped, r)
-			}
-		}
-
-		// Print successful
-		if len(successful) > 0 {
-			fmt.Println("\n✅ Successful Installations:")
-			for _, r := range successful {
-				fmt.Printf("  • %s (%s/%s)\n", r.Instance.ID, r.Instance.Account, r.Instance.Region)
-
-				// Print metadata (OS, certname, etc)
-				printInstanceMetadata(r.Metadata)
-
-				// Print duration
-				duration := r.Duration.Round(time.Second)
-				fmt.Printf("    Duration: %s\n", duration)
-			}
-		}
-
-		// Print failed
-		if len(failed) > 0 {
-			fmt.Println("\n❌ Failed Installations:")
-			for _, r := range failed {
-				fmt.Printf("  • %s (%s/%s)\n", r.Instance.ID, r.Instance.Account, r.Instance.Region)
-
-				// Print metadata (shows detected OS even on failure)
-				printInstanceMetadata(r.Metadata)
-
-				if err := r.GetError(); err != nil {
-					fmt.Printf("    Error: %s\n", err)
-				}
-			}
-		}
-
-		// Print skipped
-		if len(skipped) > 0 {
-			fmt.Println("\n⏭️  Skipped Installations:")
-			for _, r := range skipped {
-				fmt.Printf("  • %s (%s/%s)\n", r.Instance.ID, r.Instance.Account, r.Instance.Region)
-				if err := r.GetError(); err != nil {
-					fmt.Printf("    Reason: %s\n", err)
-				}
-			}
-		}
-
-		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	if len(result.Results) == 0 {
+		return
 	}
+
+	// Print header
+	fmt.Println("\n# DETAILED RESULTS:")
+
+	// Prepare data for table
+	header, rows := prepareResultRows(result)
+
+	// Render table with borders using presenter
+	presenter.PrintTable(header, rows)
+
+	// Print footnotes
+	if hasCertnamePreserved(result) {
+		fmt.Println("\n(*) Certname preserved from previous installation")
+	}
+
+	// Print summary
+	printSummary(result)
+}
+
+// hasCertnamePreserved checks if any instance had certname preserved.
+func hasCertnamePreserved(result *executor.AggregatedResult) bool {
+	for _, r := range result.Results {
+		if r.Metadata["certname_preserved"] == "true" {
+			return true
+		}
+	}
+	return false
+}
+
+// printSummary prints execution summary with counts and total duration.
+func printSummary(result *executor.AggregatedResult) {
+	successCount := 0
+	failedCount := 0
+	skippedCount := 0
+
+	for _, r := range result.Results {
+		switch r.Status {
+		case executor.StatusSuccess:
+			successCount++
+		case executor.StatusFailed:
+			failedCount++
+		case executor.StatusSkipped:
+			skippedCount++
+		}
+	}
+
+	fmt.Printf("\n📊 Summary: %d successful, %d failed, %d skipped\n",
+		successCount, failedCount, skippedCount)
 }
