@@ -117,7 +117,7 @@ func NewProvider(cloudType string, options ...Option) (cloud.CloudProvider, erro
 
 	case ProviderAzure:
 		// Azure provider not yet implemented
-		return nil, fmt.Errorf("Azure provider not yet implemented (coming soon)")
+		return nil, fmt.Errorf("azure provider not yet implemented (coming soon)")
 
 	default:
 		return nil, fmt.Errorf("unsupported cloud provider: %s (supported: aws, gcp, azure)", cloudType)
