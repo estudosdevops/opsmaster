@@ -430,6 +430,93 @@ echo "  ✓ Facter blocklist configured"
 `
 }
 
+// generateElasticFlagFixScript generates shell script to handle Elastic Agent enrollment errors.
+// This fixes the common issue where Elastic Agent is already installed but missing the flag file,
+// causing Puppet manifests to fail with enrollment errors.
+//
+// The script:
+// 1. Uses the PUPPET_EXIT_CODE variable set by generatePuppetRunScript
+// 2. If exit code indicates failure AND Elastic Agent service exists, creates missing flag file
+// 3. Re-runs puppet agent -t to complete the configuration
+//
+// Expected error pattern from Puppet manifests:
+// 'elastic-agent enroll --url=... --enrollment-token=... --delay-enroll && touch /opt/elastic_flagfile' returned 1 instead of one of [0]
+//
+// Returns bash script that handles this specific error case automatically.
+func (*PuppetInstaller) generateElasticFlagFixScript() string {
+	return `
+# ============================================================
+# Elastic Agent Flag Fix Handler
+# ============================================================
+# Auto-fix for cases where Elastic Agent is already installed but missing flag file
+
+echo "Analyzing Puppet agent results..."
+echo "Puppet exit code: $PUPPET_EXIT_CODE"
+
+# Only try to fix if Puppet had actual failures (not success codes 0, 2, 6)
+if [ $PUPPET_EXIT_CODE -ne 0 ] && [ $PUPPET_EXIT_CODE -ne 2 ] && [ $PUPPET_EXIT_CODE -ne 6 ]; then
+    echo "⚠ Puppet agent run had failures (exit code: $PUPPET_EXIT_CODE)"
+    echo "Checking for Elastic Agent enrollment errors..."
+
+    # Check if elastic-agent service exists (indicating it's already installed)
+    if systemctl list-unit-files 2>/dev/null | grep -q "elastic-agent.service"; then
+        echo "  ✓ Elastic Agent service detected"
+
+        # Check if flag file is missing (root cause of enrollment errors)
+        if [ ! -f /opt/elastic_flagfile ]; then
+            echo "  ⚠ Missing Elastic Agent flag file: /opt/elastic_flagfile"
+            echo "  → This likely caused the Puppet enrollment error"
+            echo "  → Creating flag file to fix Puppet manifest..."
+
+            # Create the missing flag file (remove sudo - script should already run as root)
+            touch /opt/elastic_flagfile && chmod 644 /opt/elastic_flagfile
+
+            if [ -f /opt/elastic_flagfile ]; then
+                echo "  ✅ Flag file created successfully: /opt/elastic_flagfile"
+                echo "  → Re-running Puppet agent to complete configuration..."
+
+                # Re-run puppet agent now that flag file exists
+                /opt/puppetlabs/bin/puppet agent --test --waitforcert 60
+                SECOND_EXIT_CODE=$?
+
+                echo "  → Second puppet run completed with exit code: $SECOND_EXIT_CODE"
+                case $SECOND_EXIT_CODE in
+                    0|2|6)
+                        echo "  ✅ Puppet configuration completed successfully after flag fix!"
+                        echo "  🎯 Elastic Agent enrollment issue resolved!"
+                        ;;
+                    *)
+                        echo "  ⚠ Second puppet run still has issues (exit code: $SECOND_EXIT_CODE)"
+                        echo "  → Manual investigation may be needed for remaining issues"
+                        echo "  → But Elastic Agent flag fix was successfully applied"
+                        ;;
+                esac
+            else
+                echo "  ❌ Failed to create flag file - filesystem or permission issue"
+                echo "  → Manual intervention required: sudo touch /opt/elastic_flagfile"
+            fi
+        else
+            echo "  ✓ Elastic Agent flag file already exists: /opt/elastic_flagfile"
+            echo "  → File size: $(stat -c%s /opt/elastic_flagfile 2>/dev/null || echo 'unknown') bytes"
+            echo "  → This appears to be a different Puppet issue (not Elastic Agent related)"
+            echo "  → Check Puppet server logs for details"
+        fi
+    else
+        echo "  ℹ Elastic Agent service not found on this system"
+        echo "  → This appears to be a different Puppet issue (not Elastic Agent related)"
+        echo "  → Common issues: network connectivity, certificate problems, server configuration"
+    fi
+else
+    echo "✅ Puppet agent run completed with acceptable result (exit code: $PUPPET_EXIT_CODE)"
+    echo "→ No Elastic Agent fixes needed"
+fi
+
+echo "============================================================"
+echo "Elastic Agent Flag Fix Handler completed"
+echo "============================================================"
+`
+}
+
 // generatePuppetConfigScript generates shell script to configure puppet.conf.
 // This is common to both Debian and RHEL installation scripts.
 //
@@ -465,18 +552,42 @@ echo "  Certname: %s"
 // Executes puppet agent with:
 //   - --test: Run in foreground (not as service)
 //   - --waitforcert 60: Wait up to 60 seconds for certificate signing
-//   - || true: Don't fail if puppet run has errors (common on first run)
+//   - Handles Puppet exit codes properly (0, 2, 6 are success; others need investigation)
 //
 // Returns bash script that runs puppet agent and reports version.
 func (*PuppetInstaller) generatePuppetRunScript() string {
 	return `# Run initial puppet agent (will request certificate)
 echo "Running initial Puppet agent..."
-/opt/puppetlabs/bin/puppet agent --test --waitforcert 60 || true
+/opt/puppetlabs/bin/puppet agent --test --waitforcert 60
+PUPPET_EXIT_CODE=$?
+
+echo "Puppet agent completed with exit code: $PUPPET_EXIT_CODE"
+
+# Puppet exit codes:
+# 0 = success, no changes
+# 2 = success, changes made
+# 4 = failure during run
+# 6 = success, changes made and restart required
+case $PUPPET_EXIT_CODE in
+    0)
+        echo "  ✅ Puppet run successful - no changes needed"
+        ;;
+    2)
+        echo "  ✅ Puppet run successful - changes applied"
+        ;;
+    6)
+        echo "  ✅ Puppet run successful - changes applied, restart may be required"
+        ;;
+    *)
+        echo "  ⚠ Puppet run had issues (exit code: $PUPPET_EXIT_CODE)"
+        echo "  → Will attempt automatic fixes if applicable"
+        ;;
+esac
 
 # Check puppet version
 PUPPET_VERSION=$(/opt/puppetlabs/bin/puppet --version)
 echo "================================================"
-echo "Puppet Agent ${PUPPET_VERSION} installed successfully!"
+echo "Puppet Agent ${PUPPET_VERSION} installation completed!"
 echo "================================================"
 `
 }
@@ -553,15 +664,17 @@ func (pi *PuppetInstaller) GenerateInstallScript(os string, _ map[string]string)
 
 // generateDebianScript generates installation script for Debian/Ubuntu.
 // Includes custom Facter facts creation if configured.
+// Also includes automatic Elastic Agent flag fix for enrollment errors.
 func (pi *PuppetInstaller) generateDebianScript(certname string, instance *cloud.Instance) string {
 	// Generate script components (reusable across Debian/RHEL)
 	factsScript := pi.generateFactsScript(instance)
 	facterBlocklist := pi.generateFacterBlocklistScript()
 	puppetConfig := pi.generatePuppetConfigScript(certname)
 	puppetRun := pi.generatePuppetRunScript()
+	elasticFix := pi.generateElasticFlagFixScript()
 
 	return fmt.Sprintf(`#!/bin/bash
-set -e
+# Note: Removed 'set -e' to allow Puppet exit codes to be handled gracefully
 
 echo "================================================"
 echo "Installing Puppet Agent on Debian/Ubuntu"
@@ -581,35 +694,47 @@ fi
 echo "Installing Puppet %s repository..."
 REPO_DEB="puppet%s-release-${VERSION_CODENAME}.deb"
 wget -q "https://apt.puppet.com/${REPO_DEB}" -O /tmp/${REPO_DEB}
-dpkg -i /tmp/${REPO_DEB}
+if ! dpkg -i /tmp/${REPO_DEB}; then
+    echo "Error installing Puppet repository"
+    exit 1
+fi
 rm /tmp/${REPO_DEB}
 
 # Update apt cache
 echo "Updating package cache..."
-apt-get update -qq
+if ! apt-get update -qq; then
+    echo "Error updating package cache"
+    exit 1
+fi
 
 # Install puppet-agent
 echo "Installing puppet-agent package..."
-DEBIAN_FRONTEND=noninteractive apt-get install -y puppet-agent
+if ! DEBIAN_FRONTEND=noninteractive apt-get install -y puppet-agent; then
+    echo "Error installing puppet-agent package"
+    exit 1
+fi
 
 %s
 %s
 %s
 %s
-`, pi.puppetVersion, pi.puppetVersion, facterBlocklist, factsScript, puppetConfig, puppetRun)
+%s
+`, pi.puppetVersion, pi.puppetVersion, facterBlocklist, factsScript, puppetConfig, puppetRun, elasticFix)
 }
 
 // generateRHELScript generates installation script for RHEL/CentOS/Amazon Linux.
 // Includes custom Facter facts creation if configured.
+// Also includes automatic Elastic Agent flag fix for enrollment errors.
 func (pi *PuppetInstaller) generateRHELScript(certname string, instance *cloud.Instance) string {
 	// Generate script components (reusable across Debian/RHEL)
 	factsScript := pi.generateFactsScript(instance)
 	facterBlocklist := pi.generateFacterBlocklistScript()
 	puppetConfig := pi.generatePuppetConfigScript(certname)
 	puppetRun := pi.generatePuppetRunScript()
+	elasticFix := pi.generateElasticFlagFixScript()
 
 	return fmt.Sprintf(`#!/bin/bash
-set -e
+# Note: Removed 'set -e' to allow Puppet exit codes to be handled gracefully
 
 echo "================================================"
 echo "Installing Puppet Agent on RHEL/Amazon Linux"
@@ -639,13 +764,17 @@ rpm -Uvh "https://yum.puppet.com/${REPO_RPM}" 2>/dev/null || echo "Repository al
 
 # Install puppet-agent
 echo "Installing puppet-agent package..."
-yum install -y puppet-agent
+if ! yum install -y puppet-agent; then
+    echo "Error installing puppet-agent package"
+    exit 1
+fi
 
 %s
 %s
 %s
 %s
-`, pi.puppetVersion, pi.puppetVersion, facterBlocklist, factsScript, puppetConfig, puppetRun)
+%s
+`, pi.puppetVersion, pi.puppetVersion, facterBlocklist, factsScript, puppetConfig, puppetRun, elasticFix)
 }
 
 // VerifyInstallation verifies that Puppet was installed successfully.

@@ -30,7 +30,7 @@ type mockCloudProvider struct {
 }
 
 // Name implements the cloud.CloudProvider interface
-func (_ *mockCloudProvider) Name() string {
+func (*mockCloudProvider) Name() string {
 	return "mock"
 }
 
@@ -49,25 +49,25 @@ func (m *mockCloudProvider) ExecuteCommand(ctx context.Context, instance *cloud.
 
 // ValidateInstance implements the cloud.CloudProvider interface
 // Simple mock that always returns success
-func (_ *mockCloudProvider) ValidateInstance(_ context.Context, _ *cloud.Instance) error {
+func (*mockCloudProvider) ValidateInstance(context.Context, *cloud.Instance) error {
 	return nil
 }
 
 // TestConnectivity implements the cloud.CloudProvider interface
 // Simple mock that always returns success
-func (_ *mockCloudProvider) TestConnectivity(_ context.Context, _ *cloud.Instance, _ string, _ int) error {
+func (*mockCloudProvider) TestConnectivity(context.Context, *cloud.Instance, string, int) error {
 	return nil
 }
 
 // TagInstance implements the cloud.CloudProvider interface
 // Simple mock that always returns success
-func (_ *mockCloudProvider) TagInstance(_ context.Context, _ *cloud.Instance, _ map[string]string) error {
+func (*mockCloudProvider) TagInstance(context.Context, *cloud.Instance, map[string]string) error {
 	return nil
 }
 
 // HasTag implements the cloud.CloudProvider interface
 // Simple mock that always returns false
-func (_ *mockCloudProvider) HasTag(_ context.Context, _ *cloud.Instance, _, _ string) (bool, error) {
+func (*mockCloudProvider) HasTag(context.Context, *cloud.Instance, string, string) (bool, error) {
 	return false, nil
 }
 
@@ -893,4 +893,252 @@ func TestGenerateInstallScriptWithAutoDetect_RaceDetector(t *testing.T) {
 	// ASSERT
 	// If there's a race condition, `go test -race` will detect and report!
 	// No need for explicit assertions here - the race detector does the work.
+}
+
+// ============================================================
+// ELASTIC AGENT FIX TESTS
+// ============================================================
+
+// TestGenerateElasticFlagFixScript tests the Elastic Agent flag fix script generation.
+//
+// 🎓 CONCEPT: Testing bash script generation
+// When functions generate shell scripts, we need to validate:
+// - Script contains required logic components
+// - Conditional statements are correct
+// - Error messages are informative
+// - Scripts follow bash best practices
+func TestGenerateElasticFlagFixScript(t *testing.T) {
+	installer := NewPuppetInstaller(PuppetOptions{
+		Server: "puppet.example.com",
+		Port:   8140,
+	})
+
+	t.Run("script contains all required components", func(t *testing.T) {
+		script := installer.generateElasticFlagFixScript()
+
+		// 🎓 CONCEPT: Component validation
+		// For bash scripts, we validate that key components exist
+		requiredComponents := []string{
+			"Elastic Agent Flag Fix Handler",          // Title/purpose
+			"PUPPET_EXIT_CODE",                        // Exit code handling
+			"systemctl list-unit-files",               // Service detection
+			"elastic-agent.service",                   // Service name
+			"/opt/elastic_flagfile",                   // Flag file path
+			"touch /opt/elastic_flagfile",             // File creation
+			"chmod 644 /opt/elastic_flagfile",         // File permissions
+			"/opt/puppetlabs/bin/puppet agent --test", // Puppet re-run
+			"SECOND_EXIT_CODE",                        // Second run tracking
+		}
+
+		for _, component := range requiredComponents {
+			if !strings.Contains(script, component) {
+				t.Errorf("Script missing required component: %q", component)
+			}
+		}
+	})
+
+	t.Run("script has proper conditional logic", func(t *testing.T) {
+		script := installer.generateElasticFlagFixScript()
+
+		// 🎓 CONCEPT: Logic validation
+		// Validate that conditional statements follow expected patterns
+		conditionals := []string{
+			"if [ $PUPPET_EXIT_CODE -ne 0 ] && [ $PUPPET_EXIT_CODE -ne 2 ] && [ $PUPPET_EXIT_CODE -ne 6 ]", // Only fix real failures
+			"if systemctl list-unit-files",      // Service check
+			"if [ ! -f /opt/elastic_flagfile ]", // File missing check
+			"if [ -f /opt/elastic_flagfile ]",   // File exists check
+			"case $SECOND_EXIT_CODE in",         // Exit code handling
+		}
+
+		for _, conditional := range conditionals {
+			if !strings.Contains(script, conditional) {
+				t.Errorf("Script missing conditional logic: %q", conditional)
+			}
+		}
+	})
+
+	t.Run("script has informative messages", func(t *testing.T) {
+		script := installer.generateElasticFlagFixScript()
+
+		// 🎓 CONCEPT: UX validation
+		// Scripts should provide clear feedback to users about what's happening
+		messages := []string{
+			"Analyzing Puppet agent results",
+			"Puppet agent run had failures",
+			"Checking for Elastic Agent enrollment errors",
+			"Elastic Agent service detected",
+			"Missing Elastic Agent flag file",
+			"Creating flag file to fix Puppet manifest",
+			"Flag file created successfully",
+			"Re-running Puppet agent to complete configuration",
+			"Puppet configuration completed successfully",
+			"Elastic Agent enrollment issue resolved",
+			"Elastic Agent service not found",
+		}
+
+		for _, message := range messages {
+			if !strings.Contains(script, message) {
+				t.Errorf("Script missing informative message: %q", message)
+			}
+		}
+	})
+
+	t.Run("script follows bash best practices", func(t *testing.T) {
+		script := installer.generateElasticFlagFixScript()
+
+		// 🎓 CONCEPT: Bash best practices validation
+		// Good bash scripts should follow certain patterns for reliability
+		bestPractices := []string{
+			"2>/dev/null", // Error redirection
+			"chmod 644",   // Explicit permissions
+			"case $",      // Case statements for exit codes
+			"0|2|6)",      // Multiple exit code handling
+			"else",        // Proper else branches
+			"fi",          // Proper if closures
+			"esac",        // Proper case closures
+		}
+
+		for _, practice := range bestPractices {
+			if !strings.Contains(script, practice) {
+				t.Errorf("Script missing bash best practice: %q", practice)
+			}
+		}
+	})
+
+	t.Run("script handles idempotent execution", func(t *testing.T) {
+		script := installer.generateElasticFlagFixScript()
+
+		// 🎓 CONCEPT: Idempotency validation
+		// Scripts should handle being run multiple times safely
+		idempotencyChecks := []string{
+			"if [ -f /opt/elastic_flagfile ]",        // Check if file already exists
+			"Elastic Agent flag file already exists", // Message for existing file
+			"acceptable result",                      // Handle success codes
+			"No Elastic Agent fixes needed",          // Skip when not needed
+		}
+
+		for _, check := range idempotencyChecks {
+			if !strings.Contains(script, check) {
+				t.Errorf("Script missing idempotency check: %q", check)
+			}
+		}
+	})
+}
+
+// TestGenerateElasticFlagFixScript_Integration tests that the elastic fix is properly
+// integrated into the main installation scripts.
+//
+// 🎓 CONCEPT: Integration testing
+// Unlike unit tests that test isolated functions, integration tests verify
+// that multiple components work together correctly.
+func TestGenerateElasticFlagFixScript_Integration(t *testing.T) {
+	installer := NewPuppetInstaller(PuppetOptions{
+		Server: "puppet.example.com",
+		Port:   8140,
+	})
+
+	t.Run("debian script includes elastic fix", func(t *testing.T) {
+		// Generate Debian installation script
+		scripts, err := installer.GenerateInstallScript("debian", map[string]string{})
+		if err != nil {
+			t.Fatalf("Failed to generate Debian script: %v", err)
+		}
+
+		if len(scripts) == 0 {
+			t.Fatal("No scripts generated")
+		}
+
+		script := scripts[0]
+
+		// 🎓 CONCEPT: Integration verification
+		// Verify that the elastic fix is included in the main script
+		elasticFixMarkers := []string{
+			"Elastic Agent Flag Fix Handler",
+			"Analyzing Puppet agent results",
+			"PUPPET_EXIT_CODE",
+			"elastic-agent.service",
+			"/opt/elastic_flagfile",
+		}
+
+		for _, marker := range elasticFixMarkers {
+			if !strings.Contains(script, marker) {
+				t.Errorf("Debian script missing elastic fix marker: %q", marker)
+			}
+		}
+	})
+
+	t.Run("rhel script includes elastic fix", func(t *testing.T) {
+		// Generate RHEL installation script
+		scripts, err := installer.GenerateInstallScript("rhel", map[string]string{})
+		if err != nil {
+			t.Fatalf("Failed to generate RHEL script: %v", err)
+		}
+
+		if len(scripts) == 0 {
+			t.Fatal("No scripts generated")
+		}
+
+		script := scripts[0]
+
+		// Verify that the elastic fix is included
+		elasticFixMarkers := []string{
+			"Elastic Agent Flag Fix Handler",
+			"Analyzing Puppet agent results",
+			"PUPPET_EXIT_CODE",
+			"elastic-agent.service",
+			"/opt/elastic_flagfile",
+		}
+
+		for _, marker := range elasticFixMarkers {
+			if !strings.Contains(script, marker) {
+				t.Errorf("RHEL script missing elastic fix marker: %q", marker)
+			}
+		}
+	})
+
+	t.Run("dry principle compliance", func(t *testing.T) {
+		// 🎓 CONCEPT: DRY compliance testing
+		// Verify that both scripts use the same elastic fix implementation
+		debianScripts, err := installer.GenerateInstallScript("debian", map[string]string{})
+		if err != nil {
+			t.Fatalf("Failed to generate Debian script: %v", err)
+		}
+
+		rhelScripts, err := installer.GenerateInstallScript("rhel", map[string]string{})
+		if err != nil {
+			t.Fatalf("Failed to generate RHEL script: %v", err)
+		}
+
+		debianScript := debianScripts[0]
+		rhelScript := rhelScripts[0]
+
+		// Extract the elastic fix section from both scripts
+		debianFixStart := strings.Index(debianScript, "Elastic Agent Flag Fix Handler")
+		rhelFixStart := strings.Index(rhelScript, "Elastic Agent Flag Fix Handler")
+
+		if debianFixStart == -1 {
+			t.Fatal("Debian script missing elastic fix section")
+		}
+		if rhelFixStart == -1 {
+			t.Fatal("RHEL script missing elastic fix section")
+		}
+
+		debianFixEnd := strings.Index(debianScript[debianFixStart:], "============================================================")
+		rhelFixEnd := strings.Index(rhelScript[rhelFixStart:], "============================================================")
+
+		// Add offset to get absolute position
+		debianFixEnd += debianFixStart
+		rhelFixEnd += rhelFixStart
+
+		debianFixSection := debianScript[debianFixStart:debianFixEnd]
+		rhelFixSection := rhelScript[rhelFixStart:rhelFixEnd]
+
+		// 🎓 CONCEPT: Exact match verification
+		// The elastic fix logic should be identical in both scripts (DRY principle)
+		if debianFixSection != rhelFixSection {
+			t.Error("Elastic fix sections differ between Debian and RHEL scripts - DRY principle violated")
+			t.Logf("Debian fix section length: %d", len(debianFixSection))
+			t.Logf("RHEL fix section length: %d", len(rhelFixSection))
+		}
+	})
 }
