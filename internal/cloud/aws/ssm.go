@@ -43,6 +43,46 @@ func NewAWSProvider() *AWSProvider {
 	}
 }
 
+// NewAWSProviderWithProfile creates a new AWS provider with specific AWS profile.
+// This enables SSO authentication by using named profiles from ~/.aws/config.
+//
+// Parameters:
+//   - ctx: Context for timeout and cancellation control
+//   - profile: AWS profile name (e.g., "sso-production", "dev-account")
+//
+// Returns:
+//   - *AWSProvider: Configured provider instance
+//   - error: Error if profile is invalid or AWS config fails
+//
+// Example usage:
+//
+//	provider, err := NewAWSProviderWithProfile(ctx, "sso-production")
+//	if err != nil {
+//	    return fmt.Errorf("failed to create AWS provider: %w", err)
+//	}
+//
+// SSO Flow:
+//  1. Reads profile from ~/.aws/config
+//  2. If SSO configured, uses cached credentials or prompts for login
+//  3. Creates provider with authenticated session
+func NewAWSProviderWithProfile(ctx context.Context, profile string) (*AWSProvider, error) {
+	// Validate profile parameter
+	if profile == "" {
+		return nil, fmt.Errorf("profile cannot be empty")
+	}
+
+	// Create session manager with profile support
+	sessionManager, err := NewSessionManagerWithProfile(ctx, profile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create session manager with profile %s: %w", profile, err)
+	}
+
+	return &AWSProvider{
+		sessionManager: sessionManager,
+		log:            logger.Get(),
+	}, nil
+}
+
 // Name returns the provider name
 func (*AWSProvider) Name() string {
 	return "aws"
@@ -61,8 +101,9 @@ func (p *AWSProvider) ValidateInstance(ctx context.Context, instance *cloud.Inst
 		"account", instance.Account,
 		"region", instance.Region)
 
-	// Get SSM client for this account/region
-	client, err := p.sessionManager.GetSSMClient(ctx, instance.Account, instance.Region)
+	// Get SSM client for this instance's profile/region
+	profile := getProfileForInstance(instance)
+	client, err := p.sessionManager.GetSSMClient(ctx, profile, instance.Region)
 	if err != nil {
 		return fmt.Errorf("failed to get SSM client: %w", err)
 	}
@@ -119,7 +160,8 @@ func (p *AWSProvider) ExecuteCommand(ctx context.Context, instance *cloud.Instan
 		"timeout", timeout)
 
 	// Get SSM client
-	client, err := p.sessionManager.GetSSMClient(ctx, instance.Account, instance.Region)
+	profile := getProfileForInstance(instance)
+	client, err := p.sessionManager.GetSSMClient(ctx, profile, instance.Region)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get SSM client: %w", err)
 	}
@@ -324,7 +366,8 @@ func (p *AWSProvider) TagInstance(ctx context.Context, instance *cloud.Instance,
 		"tags_count", len(tags))
 
 	// Get EC2 client (not SSM, as tags are EC2 resources)
-	ec2Client, err := p.sessionManager.GetEC2Client(ctx, instance.Account, instance.Region)
+	profile := getProfileForInstance(instance)
+	ec2Client, err := p.sessionManager.GetEC2Client(ctx, profile, instance.Region)
 	if err != nil {
 		return fmt.Errorf("failed to get EC2 client: %w", err)
 	}
@@ -369,7 +412,8 @@ func (p *AWSProvider) HasTag(ctx context.Context, instance *cloud.Instance, key,
 		"tag_value", value)
 
 	// Get EC2 client
-	ec2Client, err := p.sessionManager.GetEC2Client(ctx, instance.Account, instance.Region)
+	profile := getProfileForInstance(instance)
+	ec2Client, err := p.sessionManager.GetEC2Client(ctx, profile, instance.Region)
 	if err != nil {
 		return false, fmt.Errorf("failed to get EC2 client: %w", err)
 	}
@@ -410,4 +454,22 @@ func (p *AWSProvider) HasTag(ctx context.Context, instance *cloud.Instance, key,
 		"tag_value", value)
 
 	return false, nil
+}
+
+// getProfileForInstance determines the AWS profile to use for a specific instance.
+// Priority order:
+//  1. aws_profile from instance metadata (from CSV)
+//  2. Account ID as fallback (backward compatibility)
+//
+// This function extracts the correct AWS profile to use for authentication,
+// ensuring that SSO profiles from CSV are used instead of account IDs.
+func getProfileForInstance(instance *cloud.Instance) string {
+	// Check if instance has aws_profile in metadata (from CSV)
+	if profile := instance.Metadata["aws_profile"]; profile != "" {
+		return profile
+	}
+
+	// Fallback to account ID for backward compatibility
+	// Note: This might not work for SSO profiles, but maintains compatibility
+	return instance.Account
 }

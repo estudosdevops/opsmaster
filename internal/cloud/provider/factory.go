@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -106,9 +107,12 @@ func NewProvider(cloudType string, options ...Option) (cloud.CloudProvider, erro
 	// Create provider based on type
 	switch ProviderType(normalizedType) {
 	case ProviderAWS:
-		// Create AWS provider
-		// Note: aws.NewAWSProvider() currently doesn't accept config
-		// Future enhancement: pass config to provider constructor
+		// Create AWS provider with profile support
+		if config.Profile != "" {
+			// Use profile-based authentication (supports SSO)
+			return aws.NewAWSProviderWithProfile(context.Background(), config.Profile)
+		}
+		// Fallback to default provider (uses default credentials)
 		return aws.NewAWSProvider(), nil
 
 	case ProviderGCP:

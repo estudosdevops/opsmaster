@@ -58,12 +58,32 @@ Lê lista de instâncias de arquivo CSV, valida pré-requisitos, instala Puppet 
 configura puppet.conf com certname único e cria tags nas instâncias após instalação bem-sucedida.
 
 Formato CSV:
-  instance_id,account,region,cloud,environment
-  i-0123456789abcdef0,111111111111,us-east-1,aws,production
-  i-fedcba9876543210,111111111111,us-west-2,aws,staging
+  Formato básico (obrigatório):
+    instance_id,account,region,environment
+    i-0123456789abcdef0,111111111111,us-east-1,production
+    i-fedcba9876543210,111111111111,us-west-2,staging
+
+  Formato com AWS Profile (para SSO):
+    instance_id,account,region,environment,aws_profile
+    i-0123456789abcdef0,111111111111,us-east-1,production,aws-staging-applications
+    i-fedcba9876543210,111111111111,us-west-2,staging,aws-staging-applications
 
 O arquivo CSV deve ter cabeçalhos: instance_id, account, region
-Colunas opcionais: cloud (padrão aws), environment, quaisquer colunas extras são armazenadas como metadados.
+Colunas opcionais:
+  - cloud (padrão aws)
+  - environment
+  - aws_profile (para autenticação SSO)
+  - quaisquer colunas extras são armazenadas como metadados
+
+Autenticação AWS:
+  O OpsMaster suporta três métodos de autenticação (em ordem de prioridade):
+  1. Flag --aws-profile (maior prioridade)
+  2. Coluna aws_profile no CSV
+  3. Account ID como profile (compatibilidade com versões anteriores)
+
+  Para usar SSO, configure profiles em ~/.aws/config e use:
+    - Flag: --aws-profile nome-do-profile
+    - CSV: coluna aws_profile com nome do profile por instância
 
 Custom Facter Facts:
   Por padrão, o OpsMaster cria automaticamente um arquivo location.yaml em
@@ -93,6 +113,17 @@ Exemplos:
   # Instalação básica (cria location.yaml automaticamente)
   opsmaster install puppet \
     --instances-file instances.csv \
+    --puppet-server puppet.example.com
+
+  # Com SSO usando flag
+  opsmaster install puppet \
+    --instances-file instances.csv \
+    --puppet-server puppet.example.com \
+    --aws-profile aws-staging-applications
+
+  # Com SSO usando CSV (csv deve ter coluna aws_profile)
+  opsmaster install puppet \
+    --instances-file instances-with-profiles.csv \
     --puppet-server puppet.example.com
 
   # Com custom facts personalizados
@@ -186,11 +217,17 @@ func runPuppetInstall(cmd *cobra.Command, args []string) error {
 
 	log.Info("☁️  Detected cloud provider", "cloud", cloudType)
 
+	// Determine AWS profile to use (from flag or CSV)
+	effectiveAWSProfile, err := determineAWSProfile(log, instances, awsProfile)
+	if err != nil {
+		return fatalError(log, "Failed to determine AWS profile", err)
+	}
+
 	// Create provider using factory
 	var providerOptions []provider.Option
-	if awsProfile != "" {
-		providerOptions = append(providerOptions, provider.WithProfile(awsProfile))
-		log.Info("   Using AWS profile", "profile", awsProfile)
+	if effectiveAWSProfile != "" {
+		providerOptions = append(providerOptions, provider.WithProfile(effectiveAWSProfile))
+		log.Info("   Using AWS profile", "profile", effectiveAWSProfile)
 	}
 
 	cloudProvider, err := provider.NewProvider(cloudType, providerOptions...)
@@ -517,4 +554,58 @@ func printSummary(result *executor.AggregatedResult) {
 
 	fmt.Printf("\n📊 Summary: %d successful, %d failed, %d skipped\n",
 		successCount, failedCount, skippedCount)
+}
+
+// determineAWSProfile determines which AWS profile to use for authentication.
+// Priority order:
+//  1. Flag --aws-profile (highest priority)
+//  2. aws_profile column from CSV (per-instance)
+//  3. Account ID as profile (backward compatibility fallback)
+//
+// Returns error if instances have conflicting profiles in CSV.
+func determineAWSProfile(log *slog.Logger, instances []*cloud.Instance, flagProfile string) (string, error) {
+	// If flag is provided, use it (overrides CSV)
+	if flagProfile != "" {
+		log.Info("   Using AWS profile from --aws-profile flag", "profile", flagProfile)
+		return flagProfile, nil
+	}
+
+	// Check if CSV has aws_profile column
+	var csvProfiles []string
+	var instancesWithProfile []*cloud.Instance
+
+	for _, instance := range instances {
+		if profile := instance.Metadata["aws_profile"]; profile != "" {
+			csvProfiles = append(csvProfiles, profile)
+			instancesWithProfile = append(instancesWithProfile, instance)
+		}
+	}
+
+	// If no aws_profile in CSV, fallback to account ID (backward compatibility)
+	if len(csvProfiles) == 0 {
+		log.Info("   No aws_profile in CSV, using account ID as profile (backward compatibility)")
+		if len(instances) > 0 {
+			return instances[0].Account, nil // All instances should have same account from DetectCloudFromInstances
+		}
+		return "", nil
+	}
+
+	// Validate all instances have the same profile
+	firstProfile := csvProfiles[0]
+	for i, profile := range csvProfiles {
+		if profile != firstProfile {
+			return "", fmt.Errorf("instances have conflicting AWS profiles: instance %s uses '%s' but instance %s uses '%s'. All instances must use the same AWS profile",
+				instancesWithProfile[0].ID, firstProfile,
+				instancesWithProfile[i].ID, profile)
+		}
+	}
+
+	// Check if some instances have profile and others don't
+	if len(instancesWithProfile) != len(instances) {
+		return "", fmt.Errorf("inconsistent aws_profile usage: %d instances have aws_profile but %d don't. Either all instances must have aws_profile column or none",
+			len(instancesWithProfile), len(instances)-len(instancesWithProfile))
+	}
+
+	log.Info("   Using AWS profile from CSV", "profile", firstProfile, "instances", len(instances))
+	return firstProfile, nil
 }
