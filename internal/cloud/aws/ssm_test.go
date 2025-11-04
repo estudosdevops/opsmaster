@@ -575,3 +575,175 @@ func TestAWSProvider_TimeoutHandling(t *testing.T) {
 func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
+
+// ============================================================
+// PROFILE RESOLUTION TESTS
+// ============================================================
+
+// TestGetProfileForInstance tests the profile resolution logic
+func TestGetProfileForInstance(t *testing.T) {
+	tests := []struct {
+		name            string
+		instance        *cloud.Instance
+		expectedProfile string
+		description     string
+	}{
+		{
+			name: "instance_with_aws_profile_metadata",
+			instance: &cloud.Instance{
+				ID:      "i-1234567890abcdef0",
+				Account: "123456789012",
+				Region:  "us-east-1",
+				Metadata: map[string]string{
+					"aws_profile": "aws-staging-applications",
+					"environment": "production",
+				},
+			},
+			expectedProfile: "aws-staging-applications",
+			description:     "Should use aws_profile from metadata when present",
+		},
+		{
+			name: "instance_without_aws_profile_metadata",
+			instance: &cloud.Instance{
+				ID:      "i-1234567890abcdef0",
+				Account: "123456789012",
+				Region:  "us-east-1",
+				Metadata: map[string]string{
+					"environment": "production",
+					"team":        "devops",
+				},
+			},
+			expectedProfile: "123456789012",
+			description:     "Should fallback to account ID when aws_profile not present",
+		},
+		{
+			name: "instance_with_empty_aws_profile",
+			instance: &cloud.Instance{
+				ID:      "i-1234567890abcdef0",
+				Account: "123456789012",
+				Region:  "us-east-1",
+				Metadata: map[string]string{
+					"aws_profile": "",
+					"environment": "staging",
+				},
+			},
+			expectedProfile: "123456789012",
+			description:     "Should fallback to account ID when aws_profile is empty",
+		},
+		{
+			name: "instance_with_nil_metadata",
+			instance: &cloud.Instance{
+				ID:       "i-1234567890abcdef0",
+				Account:  "123456789012",
+				Region:   "us-east-1",
+				Metadata: nil,
+			},
+			expectedProfile: "123456789012",
+			description:     "Should fallback to account ID when metadata is nil",
+		},
+		{
+			name: "instance_with_sso_profile",
+			instance: &cloud.Instance{
+				ID:      "i-sso123456789",
+				Account: "783816934837",
+				Region:  "us-east-1",
+				Metadata: map[string]string{
+					"aws_profile": "network-hub-gsn",
+					"environment": "production",
+				},
+			},
+			expectedProfile: "network-hub-gsn",
+			description:     "Should use SSO profile from CSV metadata",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Execute the function under test
+			actualProfile := getProfileForInstance(tt.instance)
+
+			// Verify the result
+			if actualProfile != tt.expectedProfile {
+				t.Errorf("getProfileForInstance() = %q, expected %q for case: %s",
+					actualProfile, tt.expectedProfile, tt.description)
+			} else {
+				t.Logf("✅ getProfileForInstance() = %q (correct) for case: %s",
+					actualProfile, tt.description)
+			}
+		})
+	}
+}
+
+// TestGetProfileForInstance_EdgeCases tests edge cases and error scenarios
+func TestGetProfileForInstance_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name        string
+		instance    *cloud.Instance
+		expectPanic bool
+		description string
+	}{
+		{
+			name:        "nil_instance",
+			instance:    nil,
+			expectPanic: true,
+			description: "Should handle nil instance gracefully",
+		},
+		{
+			name: "instance_with_whitespace_profile",
+			instance: &cloud.Instance{
+				ID:      "i-whitespace123",
+				Account: "123456789012",
+				Region:  "us-east-1",
+				Metadata: map[string]string{
+					"aws_profile": "  aws-staging-applications  ",
+				},
+			},
+			expectPanic: false,
+			description: "Should handle profile with whitespace",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.expectPanic {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Logf("✅ getProfileForInstance() panicked as expected for: %s", tt.description)
+					} else {
+						t.Errorf("getProfileForInstance() should have panicked for: %s", tt.description)
+					}
+				}()
+			}
+
+			// Execute the function under test
+			profile := getProfileForInstance(tt.instance)
+
+			if !tt.expectPanic {
+				// For non-panic cases, just verify it returns something
+				if profile == "" {
+					t.Errorf("getProfileForInstance() returned empty profile for: %s", tt.description)
+				} else {
+					t.Logf("✅ getProfileForInstance() = %q for: %s", profile, tt.description)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkGetProfileForInstance benchmarks the profile resolution performance
+func BenchmarkGetProfileForInstance(b *testing.B) {
+	instance := &cloud.Instance{
+		ID:      "i-benchmark123",
+		Account: "123456789012",
+		Region:  "us-east-1",
+		Metadata: map[string]string{
+			"aws_profile": "aws-staging-applications",
+			"environment": "production",
+		},
+	}
+
+	b.ResetTimer()
+	for range b.N {
+		getProfileForInstance(instance)
+	}
+}

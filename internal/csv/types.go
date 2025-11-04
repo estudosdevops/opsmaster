@@ -11,18 +11,30 @@ type CSVRecord struct {
 	Cloud      string            // Provider: aws, azure, gcp (default: aws)
 	Account    string            // Account/Subscription/Project (required)
 	Region     string            // Instance region (required)
+	AWSProfile string            // AWS profile name for SSO authentication (optional)
 	Extra      map[string]string // Optional extra columns (environment, team, etc)
 }
 
 // ToInstance converts CSVRecord to cloud.Instance.
 // This decouples CSV format from internal structure.
 func (r *CSVRecord) ToInstance() *cloud.Instance {
+	// Copy extra metadata
+	metadata := make(map[string]string)
+	for k, v := range r.Extra {
+		metadata[k] = v
+	}
+
+	// Add aws_profile to metadata if present
+	if r.AWSProfile != "" {
+		metadata["aws_profile"] = r.AWSProfile
+	}
+
 	return &cloud.Instance{
 		ID:       r.InstanceID,
 		Cloud:    r.Cloud,
 		Account:  r.Account,
 		Region:   r.Region,
-		Metadata: r.Extra,
+		Metadata: metadata,
 	}
 }
 

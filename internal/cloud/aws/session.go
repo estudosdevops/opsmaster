@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
@@ -35,6 +34,45 @@ func NewSessionManager() *SessionManager {
 		sessions:   make(map[string]*awsSession),
 		ec2Clients: make(map[string]*ec2.Client),
 	}
+}
+
+// NewSessionManagerWithProfile creates a session manager with a specific AWS profile.
+// This constructor validates the profile configuration and ensures SSO compatibility.
+//
+// Parameters:
+//   - ctx: Context for timeout and cancellation
+//   - profile: AWS profile name from ~/.aws/config
+//
+// Returns:
+//   - *SessionManager: Configured session manager
+//   - error: Error if profile is invalid or AWS config loading fails
+//
+// Authentication Flow:
+//  1. Loads AWS config using our auth.go module
+//  2. Validates profile exists and is accessible
+//  3. Creates session manager ready to use with that profile
+//
+// Note: This doesn't create actual AWS clients yet - that happens lazily
+// when GetSSMClient() or GetEC2Client() are called.
+func NewSessionManagerWithProfile(ctx context.Context, profile string) (*SessionManager, error) {
+	// Use our auth.go to validate the profile configuration
+	// This will fail early if profile doesn't exist or SSO isn't configured
+	authConfig := AuthConfig{
+		Profile: profile,
+		Region:  "", // Region will be determined per-instance
+	}
+
+	_, err := NewAWSConfig(ctx, authConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate AWS profile '%s': %w", profile, err)
+	}
+
+	// Profile is valid, create session manager
+	// The actual clients will be created with the profile when needed
+	return &SessionManager{
+		sessions:   make(map[string]*awsSession),
+		ec2Clients: make(map[string]*ec2.Client),
+	}, nil
 }
 
 // GetSSMClient returns a cached SSM client or creates a new one if needed.
@@ -131,22 +169,21 @@ func (sm *SessionManager) GetEC2Client(ctx context.Context, profile, region stri
 	return ec2Client, nil
 }
 
-// loadAWSConfig loads AWS configuration from credentials file and environment
+// loadAWSConfig loads AWS configuration using our centralized auth.go module.
+// This eliminates code duplication and ensures consistent authentication behavior.
+//
 // Uses AWS SDK v2 default credential chain:
 // 1. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
 // 2. Shared credentials file (~/.aws/credentials)
 // 3. IAM role (if running on EC2)
 func (*SessionManager) loadAWSConfig(ctx context.Context, profile, region string) (aws.Config, error) {
-	// Load config with profile and region
-	cfg, err := config.LoadDefaultConfig(ctx,
-		config.WithSharedConfigProfile(profile),
-		config.WithRegion(region),
-	)
-	if err != nil {
-		return aws.Config{}, err
+	// Use our centralized auth.go function instead of duplicating logic
+	authConfig := AuthConfig{
+		Profile: profile,
+		Region:  region,
 	}
 
-	return cfg, nil
+	return NewAWSConfig(ctx, authConfig)
 }
 
 // makeKey creates a unique key for caching clients
