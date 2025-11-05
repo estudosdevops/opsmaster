@@ -15,6 +15,7 @@ import (
 
 	"github.com/estudosdevops/opsmaster/internal/cloud"
 	"github.com/estudosdevops/opsmaster/internal/logger"
+	"github.com/estudosdevops/opsmaster/internal/retry"
 )
 
 const (
@@ -33,6 +34,8 @@ const (
 type AWSProvider struct {
 	sessionManager *SessionManager
 	log            *slog.Logger
+	ssmRetryer     retry.Retryer // For SSM operations (validation, commands)
+	ec2Retryer     retry.Retryer // For EC2 operations (tagging)
 }
 
 // NewAWSProvider creates a new AWS provider with connection pooling
@@ -40,6 +43,8 @@ func NewAWSProvider() *AWSProvider {
 	return &AWSProvider{
 		sessionManager: NewSessionManager(),
 		log:            logger.Get(),
+		ssmRetryer:     retry.New(retry.SSMPolicy),
+		ec2Retryer:     retry.New(retry.EC2Policy),
 	}
 }
 
@@ -80,6 +85,51 @@ func NewAWSProviderWithProfile(ctx context.Context, profile string) (*AWSProvide
 	return &AWSProvider{
 		sessionManager: sessionManager,
 		log:            logger.Get(),
+		ssmRetryer:     retry.New(retry.SSMPolicy),
+		ec2Retryer:     retry.New(retry.EC2Policy),
+	}, nil
+}
+
+// NewAWSProviderWithPolicies creates a new AWS provider with custom retry policies.
+// This allows fine-tuned retry behavior for different operation types.
+//
+// Parameters:
+//   - ctx: Context for timeout and cancellation control
+//   - profile: AWS profile name (empty string uses default profile)
+//   - ssmPolicy: Retry configuration for SSM operations (commands, validation)
+//   - ec2Policy: Retry configuration for EC2 operations (tagging, metadata)
+//
+// Returns:
+//   - *AWSProvider: Configured provider instance with custom retry policies
+//   - error: Error if profile is invalid or AWS config fails
+//
+// Example usage:
+//
+//	ssmPolicy := retry.RetryConfig{MaxAttempts: 5, BaseDelay: 2*time.Second, MaxDelay: 30*time.Second, Jitter: true}
+//	ec2Policy := retry.RetryConfig{MaxAttempts: 3, BaseDelay: 500*time.Millisecond, MaxDelay: 5*time.Second, Jitter: true}
+//	provider, err := NewAWSProviderWithPolicies(ctx, "sso-prod", ssmPolicy, ec2Policy)
+//	if err != nil {
+//	    return fmt.Errorf("failed to create AWS provider with custom policies: %w", err)
+//	}
+func NewAWSProviderWithPolicies(ctx context.Context, profile string, ssmPolicy, ec2Policy retry.RetryConfig) (*AWSProvider, error) {
+	var sessionManager *SessionManager
+	var err error
+
+	// Create session manager based on whether profile is provided
+	if profile == "" {
+		sessionManager = NewSessionManager()
+	} else {
+		sessionManager, err = NewSessionManagerWithProfile(ctx, profile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create session manager with profile %s: %w", profile, err)
+		}
+	}
+
+	return &AWSProvider{
+		sessionManager: sessionManager,
+		log:            logger.Get(),
+		ssmRetryer:     retry.New(ssmPolicy),
+		ec2Retryer:     retry.New(ec2Policy),
 	}, nil
 }
 
@@ -96,11 +146,20 @@ func (*AWSProvider) Name() string {
 //
 // Returns error if instance is not reachable via SSM.
 func (p *AWSProvider) ValidateInstance(ctx context.Context, instance *cloud.Instance) error {
-	p.log.Debug("Validating instance SSM connectivity",
+	p.log.Debug("Starting SSM instance validation",
 		"instance_id", instance.ID,
 		"account", instance.Account,
 		"region", instance.Region)
 
+	// Use retry mechanism for SSM validation
+	return p.ssmRetryer.Do(ctx, func() error {
+		return p.validateInstanceInternal(ctx, instance)
+	})
+}
+
+// validateInstanceInternal performs the actual SSM validation without retry.
+// This is wrapped by ValidateInstance with retry logic.
+func (p *AWSProvider) validateInstanceInternal(ctx context.Context, instance *cloud.Instance) error {
 	// Get SSM client for this instance's profile/region
 	profile := getProfileForInstance(instance)
 	client, err := p.sessionManager.GetSSMClient(ctx, profile, instance.Region)
@@ -154,11 +213,25 @@ func (p *AWSProvider) ValidateInstance(ctx context.Context, instance *cloud.Inst
 //
 // Returns CommandResult with stdout, stderr, exit code, and duration.
 func (p *AWSProvider) ExecuteCommand(ctx context.Context, instance *cloud.Instance, commands []string, timeout time.Duration) (*cloud.CommandResult, error) {
-	p.log.Info("Executing commands on instance",
+	p.log.Info("Starting command execution on instance",
 		"instance_id", instance.ID,
 		"commands_count", len(commands),
 		"timeout", timeout)
 
+	// Use retry mechanism for command execution
+	var result *cloud.CommandResult
+	err := p.ssmRetryer.Do(ctx, func() error {
+		var execErr error
+		result, execErr = p.executeCommandInternal(ctx, instance, commands, timeout)
+		return execErr
+	})
+
+	return result, err
+}
+
+// executeCommandInternal performs the actual command execution without retry.
+// This is wrapped by ExecuteCommand with retry logic.
+func (p *AWSProvider) executeCommandInternal(ctx context.Context, instance *cloud.Instance, commands []string, timeout time.Duration) (*cloud.CommandResult, error) {
 	// Get SSM client
 	profile := getProfileForInstance(instance)
 	client, err := p.sessionManager.GetSSMClient(ctx, profile, instance.Region)
@@ -361,10 +434,19 @@ func (p *AWSProvider) waitForCommand(ctx context.Context, client *ssm.Client, co
 //
 // Note: Tags are applied at EC2 level, not SSM. Requires ec2:CreateTags permission.
 func (p *AWSProvider) TagInstance(ctx context.Context, instance *cloud.Instance, tags map[string]string) error {
-	p.log.Info("Tagging instance",
+	p.log.Info("Starting instance tagging",
 		"instance_id", instance.ID,
 		"tags_count", len(tags))
 
+	// Use retry mechanism for EC2 tagging
+	return p.ec2Retryer.Do(ctx, func() error {
+		return p.tagInstanceInternal(ctx, instance, tags)
+	})
+}
+
+// tagInstanceInternal performs the actual instance tagging without retry.
+// This is wrapped by TagInstance with retry logic.
+func (p *AWSProvider) tagInstanceInternal(ctx context.Context, instance *cloud.Instance, tags map[string]string) error {
 	// Get EC2 client (not SSM, as tags are EC2 resources)
 	profile := getProfileForInstance(instance)
 	ec2Client, err := p.sessionManager.GetEC2Client(ctx, profile, instance.Region)
@@ -406,11 +488,25 @@ func (p *AWSProvider) TagInstance(ctx context.Context, instance *cloud.Instance,
 //
 // Returns true if tag exists with exact key and value, false otherwise.
 func (p *AWSProvider) HasTag(ctx context.Context, instance *cloud.Instance, key, value string) (bool, error) {
-	p.log.Debug("Checking instance tag",
+	p.log.Debug("Starting tag check with retry",
 		"instance_id", instance.ID,
 		"tag_key", key,
 		"tag_value", value)
 
+	// Use retry mechanism for EC2 tag checking
+	var result bool
+	err := p.ec2Retryer.Do(ctx, func() error {
+		var checkErr error
+		result, checkErr = p.hasTagInternal(ctx, instance, key, value)
+		return checkErr
+	})
+
+	return result, err
+}
+
+// hasTagInternal performs the actual tag checking without retry.
+// This is wrapped by HasTag with retry logic.
+func (p *AWSProvider) hasTagInternal(ctx context.Context, instance *cloud.Instance, key, value string) (bool, error) {
 	// Get EC2 client
 	profile := getProfileForInstance(instance)
 	ec2Client, err := p.sessionManager.GetEC2Client(ctx, profile, instance.Region)
