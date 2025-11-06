@@ -744,12 +744,23 @@ echo "================================================"
 if [ -f /etc/os-release ]; then
     . /etc/os-release
 
-    # Amazon Linux uses EL7 repos
+    # Amazon Linux version-specific repo selection
     if [[ "$ID" == "amzn" ]]; then
-        EL_VERSION=7
-        echo "Detected OS: Amazon Linux ${VERSION}"
+        if [[ "$VERSION_ID" == "2023" ]]; then
+            # Amazon Linux 2023 uses official Amazon repositories
+            REPO_TYPE="amazon"
+            REPO_VERSION="2023"
+            echo "Detected OS: Amazon Linux 2023 (${VERSION}) - using official Amazon repositories"
+        else
+            # Amazon Linux 2 uses EL7 repos (validated and working)
+            REPO_TYPE="el"
+            REPO_VERSION="7"
+            echo "Detected OS: Amazon Linux ${VERSION} - using EL7 repositories"
+        fi
     else
-        EL_VERSION=$(echo $VERSION_ID | cut -d. -f1)
+        # Other RHEL family uses EL repos
+        REPO_TYPE="el"
+        REPO_VERSION=$(echo $VERSION_ID | cut -d. -f1)
         echo "Detected OS: ${NAME} ${VERSION_ID}"
     fi
 else
@@ -759,8 +770,13 @@ fi
 
 # Install Puppet repository
 echo "Installing Puppet %s repository..."
-REPO_RPM="puppet%s-release-el-${EL_VERSION}.noarch.rpm"
-rpm -Uvh "https://yum.puppet.com/${REPO_RPM}" 2>/dev/null || echo "Repository already installed"
+REPO_RPM="puppet%s-release-${REPO_TYPE}-${REPO_VERSION}.noarch.rpm"
+if ! yum install -y "https://yum.puppet.com/${REPO_RPM}"; then
+    echo "Error installing Puppet repository: ${REPO_RPM}"
+    echo "Please check if the repository URL is correct and accessible"
+    exit 1
+fi
+echo "✓ Puppet repository installed successfully"
 
 # Install puppet-agent
 echo "Installing puppet-agent package..."
