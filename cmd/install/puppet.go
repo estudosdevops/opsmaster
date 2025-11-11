@@ -16,6 +16,7 @@ import (
 	"github.com/estudosdevops/opsmaster/internal/installer"
 	"github.com/estudosdevops/opsmaster/internal/logger"
 	"github.com/estudosdevops/opsmaster/internal/presenter"
+	"github.com/estudosdevops/opsmaster/internal/retry"
 )
 
 // Puppet command flags
@@ -30,6 +31,13 @@ var (
 	awsProfile      string // AWS profile to use
 	dryRun          bool   // Simulate without executing
 	skipValidation  bool   // Skip prerequisite validation
+
+	// Retry configuration flags
+	maxRetries  int           // Maximum retry attempts for all operations
+	retryDelay  time.Duration // Base delay between retries
+	retryJitter bool          // Add random jitter to retry delays
+	ssmRetries  int           // Maximum retry attempts for SSM operations (0 = use maxRetries)
+	ec2Retries  int           // Maximum retry attempts for EC2 operations (0 = use maxRetries)
 )
 
 // totalSteps is the total number of steps in the Puppet installation process.
@@ -169,6 +177,97 @@ func init() {
 	puppetCmd.Flags().StringVar(&awsProfile, "aws-profile", "", "Perfil AWS a usar (padrão: perfil default)")
 	puppetCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Simular instalação sem executar")
 	puppetCmd.Flags().BoolVar(&skipValidation, "skip-validation", false, "Pular validação de pré-requisitos (não recomendado)")
+
+	// Retry configuration flags
+	puppetCmd.Flags().IntVar(&maxRetries, "max-retries", 3, "Maximum retry attempts for operations")
+	puppetCmd.Flags().DurationVar(&retryDelay, "retry-delay", 2*time.Second, "Base delay between retries")
+	puppetCmd.Flags().BoolVar(&retryJitter, "retry-jitter", true, "Add random jitter to retry delays")
+	puppetCmd.Flags().IntVar(&ssmRetries, "ssm-retries", 0, "Max retries for SSM operations (0 = use --max-retries)")
+	puppetCmd.Flags().IntVar(&ec2Retries, "ec2-retries", 0, "Max retries for EC2 operations (0 = use --max-retries)")
+}
+
+// createPuppetRetryPolicies creates retry policies based on command line flags.
+// This function implements the override hierarchy: specific flags > general flags > defaults.
+//
+// For Puppet operations, we optimize policies for different operation types:
+// - SSM operations: Conservative (Puppet installations can be slow)
+// - EC2 operations: Aggressive (EC2 APIs are fast and reliable)
+//
+// Returns:
+//   - retry.RetryConfig: SSM policy for command execution and validation
+//   - retry.RetryConfig: EC2 policy for tagging and metadata operations
+func createPuppetRetryPolicies() (retry.RetryConfig, retry.RetryConfig) {
+	// Validate retry configuration
+	if maxRetries < 1 || maxRetries > 20 {
+		// Log warning but don't fail - use default
+		logger.Get().Warn("Invalid --max-retries value, using default",
+			"provided", maxRetries,
+			"default", 3,
+			"valid_range", "1-20")
+		maxRetries = 3
+	}
+
+	if retryDelay < 0 || retryDelay > 60*time.Second {
+		// Log warning but don't fail - use default
+		logger.Get().Warn("Invalid --retry-delay value, using default",
+			"provided", retryDelay,
+			"default", "2s",
+			"valid_range", "0s-60s")
+		retryDelay = 2 * time.Second
+	}
+
+	// SSM Policy (command execution, validation)
+	// Priority: --ssm-retries > --max-retries > default
+	ssmMaxAttempts := maxRetries
+	if ssmRetries > 0 {
+		if ssmRetries > 20 {
+			logger.Get().Warn("Invalid --ssm-retries value, using --max-retries",
+				"provided", ssmRetries,
+				"fallback", maxRetries)
+		} else {
+			ssmMaxAttempts = ssmRetries
+		}
+	}
+
+	ssmPolicy := retry.RetryConfig{
+		MaxAttempts: ssmMaxAttempts,
+		BaseDelay:   retryDelay,
+		MaxDelay:    retryDelay * 30, // Puppet can take time, allow longer delays
+		Jitter:      retryJitter,
+	}
+
+	// EC2 Policy (tagging, metadata)
+	// Priority: --ec2-retries > --max-retries > default
+	ec2MaxAttempts := maxRetries
+	if ec2Retries > 0 {
+		if ec2Retries > 20 {
+			logger.Get().Warn("Invalid --ec2-retries value, using --max-retries",
+				"provided", ec2Retries,
+				"fallback", maxRetries)
+		} else {
+			ec2MaxAttempts = ec2Retries
+		}
+	}
+
+	ec2Policy := retry.RetryConfig{
+		MaxAttempts: ec2MaxAttempts,
+		BaseDelay:   retryDelay / 2, // EC2 APIs are faster, use shorter delays
+		MaxDelay:    retryDelay * 5, // Keep max delay reasonable for EC2
+		Jitter:      retryJitter,
+	}
+
+	// Log the final retry configuration for observability
+	logger.Get().Info("Retry configuration created",
+		"ssm_max_attempts", ssmPolicy.MaxAttempts,
+		"ssm_base_delay", ssmPolicy.BaseDelay,
+		"ssm_max_delay", ssmPolicy.MaxDelay,
+		"ec2_max_attempts", ec2Policy.MaxAttempts,
+		"ec2_base_delay", ec2Policy.BaseDelay,
+		"ec2_max_delay", ec2Policy.MaxDelay,
+		"jitter", retryJitter,
+	)
+
+	return ssmPolicy, ec2Policy
 }
 
 // runPuppetInstall orchestrates the entire Puppet installation workflow
@@ -228,6 +327,23 @@ func runPuppetInstall(cmd *cobra.Command, args []string) error {
 	if effectiveAWSProfile != "" {
 		providerOptions = append(providerOptions, provider.WithProfile(effectiveAWSProfile))
 		log.Info("   Using AWS profile", "profile", effectiveAWSProfile)
+	}
+
+	// Add custom retry policies if any retry flags were used
+	if cmd.Flags().Changed("max-retries") || cmd.Flags().Changed("retry-delay") ||
+		cmd.Flags().Changed("retry-jitter") || cmd.Flags().Changed("ssm-retries") ||
+		cmd.Flags().Changed("ec2-retries") {
+
+		// Create custom retry policies based on flags
+		ssmPolicy, ec2Policy := createPuppetRetryPolicies()
+		providerOptions = append(providerOptions, provider.WithRetryPolicies(ssmPolicy, ec2Policy))
+
+		log.Info("   Using custom retry policies",
+			"ssm_max_attempts", ssmPolicy.MaxAttempts,
+			"ec2_max_attempts", ec2Policy.MaxAttempts,
+		)
+	} else {
+		log.Info("   Using default retry policies")
 	}
 
 	cloudProvider, err := provider.NewProvider(cloudType, providerOptions...)

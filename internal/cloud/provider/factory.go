@@ -7,6 +7,7 @@ import (
 
 	"github.com/estudosdevops/opsmaster/internal/cloud"
 	"github.com/estudosdevops/opsmaster/internal/cloud/aws"
+	"github.com/estudosdevops/opsmaster/internal/retry"
 )
 
 // ProviderType represents supported cloud provider types
@@ -38,8 +39,16 @@ type Config struct {
 	// Optional: can be overridden per-instance from CSV
 	Region string
 
+	// SSMRetryConfig is the retry configuration for SSM operations
+	// Optional: uses default policy if not provided
+	SSMRetryConfig *retry.RetryConfig
+
+	// EC2RetryConfig is the retry configuration for EC2 operations
+	// Optional: uses default policy if not provided
+	EC2RetryConfig *retry.RetryConfig
+
 	// Additional provider-specific options can be added here
-	// Examples: Timeout, RetryConfig, CustomEndpoint, etc.
+	// Examples: Timeout, CustomEndpoint, etc.
 }
 
 // Option is a functional option for configuring Config
@@ -56,6 +65,14 @@ func WithProfile(profile string) Option {
 func WithRegion(region string) Option {
 	return func(c *Config) {
 		c.Region = region
+	}
+}
+
+// WithRetryPolicies sets custom retry policies for SSM and EC2 operations
+func WithRetryPolicies(ssmPolicy, ec2Policy retry.RetryConfig) Option {
+	return func(c *Config) {
+		c.SSMRetryConfig = &ssmPolicy
+		c.EC2RetryConfig = &ec2Policy
 	}
 }
 
@@ -107,7 +124,13 @@ func NewProvider(cloudType string, options ...Option) (cloud.CloudProvider, erro
 	// Create provider based on type
 	switch ProviderType(normalizedType) {
 	case ProviderAWS:
-		// Create AWS provider with profile support
+		// Check if custom retry policies are provided
+		if config.SSMRetryConfig != nil && config.EC2RetryConfig != nil {
+			// Use custom retry policies
+			return aws.NewAWSProviderWithPolicies(context.Background(), config.Profile, *config.SSMRetryConfig, *config.EC2RetryConfig)
+		}
+
+		// Create AWS provider with profile support (using default retry policies)
 		if config.Profile != "" {
 			// Use profile-based authentication (supports SSO)
 			return aws.NewAWSProviderWithProfile(context.Background(), config.Profile)
