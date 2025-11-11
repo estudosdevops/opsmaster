@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/estudosdevops/opsmaster/internal/cloud"
+	"github.com/estudosdevops/opsmaster/internal/retry"
 	"github.com/estudosdevops/opsmaster/internal/validator"
 )
 
@@ -141,6 +142,51 @@ func NewPuppetInstaller(opts PuppetOptions) *PuppetInstaller {
 // Name returns the package name
 func (*PuppetInstaller) Name() string {
 	return "puppet"
+}
+
+// InstallWithRetry executes Puppet installation using the retry system for robust error handling.
+// This method combines prevention of common issues (like Elastic Agent) with intelligent retry logic
+// using our internal/retry package instead of manual bash retry loops.
+//
+// Benefits:
+//   - Uses DRY principle with centralized retry logic
+//   - Exponential backoff with jitter for network issues
+//   - Structured logging and observability
+//   - Classification of retryable vs non-retryable errors
+//   - Prevents need for multiple opsmaster executions
+//
+// Returns: error if installation fails after all retries, nil if successful
+func (pi *PuppetInstaller) InstallWithRetry(ctx context.Context, instance *cloud.Instance, provider cloud.CloudProvider, metadata map[string]string) error {
+	// Configure retry policy specific to Puppet installation (based on SSMPolicy but customized)
+	puppetPolicy := retry.RetryConfig{
+		MaxAttempts: 2,                // Limited retries for Puppet (usually works first time after prevention)
+		BaseDelay:   time.Second * 3,  // Short initial delay
+		MaxDelay:    time.Second * 15, // Reasonable max delay for Puppet
+		Jitter:      true,             // Add jitter to avoid thundering herd
+	}
+
+	retryer := retry.New(puppetPolicy)
+
+	return retryer.Do(ctx, func() error {
+		// Generate and execute installation script
+		commands, _, err := pi.GenerateInstallScriptWithAutoDetect(ctx, instance, provider, metadata)
+		if err != nil {
+			return fmt.Errorf("failed to generate install script: %w", err)
+		}
+
+		// Execute installation commands with our cloud provider
+		result, err := provider.ExecuteCommand(ctx, instance, commands, DefaultSSMTimeout)
+		if err != nil {
+			return fmt.Errorf("failed to execute puppet installation: %w", err)
+		}
+
+		// Check if installation was successful
+		if result.ExitCode != 0 {
+			return fmt.Errorf("puppet installation failed with exit code %d: %s", result.ExitCode, result.Stderr)
+		}
+
+		return nil
+	})
 }
 
 // GenerateInstallScriptWithAutoDetect generates installation script with automatic OS detection.
@@ -430,89 +476,55 @@ echo "  ✓ Facter blocklist configured"
 `
 }
 
-// generateElasticFlagFixScript generates shell script to handle Elastic Agent enrollment errors.
-// This fixes the common issue where Elastic Agent is already installed but missing the flag file,
-// causing Puppet manifests to fail with enrollment errors.
+// generateElasticPreventionScript generates shell script to prevent Elastic Agent enrollment errors.
+// This proactively creates the flag file if Elastic Agent is installed but flag file is missing,
+// preventing the common enrollment error before it occurs.
 //
-// The script:
-// 1. Uses the PUPPET_EXIT_CODE variable set by generatePuppetRunScript
-// 2. If exit code indicates failure AND Elastic Agent service exists, creates missing flag file
-// 3. Re-runs puppet agent -t to complete the configuration
+// The prevention approach is better than reactive fixing because:
+// 1. Prevents the error instead of reacting to it
+// 2. Works on first Puppet run instead of requiring retry
+// 3. Simpler logic and more reliable
 //
-// Expected error pattern from Puppet manifests:
-// 'elastic-agent enroll --url=... --enrollment-token=... --delay-enroll && touch /opt/elastic_flagfile' returned 1 instead of one of [0]
+// Expected scenario: Elastic Agent already installed but /opt/elastic_flagfile missing
+// Solution: Create flag file preventively before running Puppet agent
 //
-// Returns bash script that handles this specific error case automatically.
-func (*PuppetInstaller) generateElasticFlagFixScript() string {
+// Returns bash script that prevents Elastic Agent enrollment errors.
+func (*PuppetInstaller) generateElasticPreventionScript() string {
 	return `
 # ============================================================
-# Elastic Agent Flag Fix Handler
+# Elastic Agent Prevention Handler
 # ============================================================
-# Auto-fix for cases where Elastic Agent is already installed but missing flag file
+# Proactively prevent Elastic Agent enrollment errors
 
-echo "Analyzing Puppet agent results..."
-echo "Puppet exit code: $PUPPET_EXIT_CODE"
+echo "Checking for Elastic Agent enrollment prevention..."
 
-# Only try to fix if Puppet had actual failures (not success codes 0, 2, 6)
-if [ $PUPPET_EXIT_CODE -ne 0 ] && [ $PUPPET_EXIT_CODE -ne 2 ] && [ $PUPPET_EXIT_CODE -ne 6 ]; then
-    echo "⚠ Puppet agent run had failures (exit code: $PUPPET_EXIT_CODE)"
-    echo "Checking for Elastic Agent enrollment errors..."
+# Check if elastic-agent service exists (indicating it's already installed)
+if systemctl list-unit-files 2>/dev/null | grep -q "elastic-agent.service"; then
+    echo "  ✓ Elastic Agent service detected"
 
-    # Check if elastic-agent service exists (indicating it's already installed)
-    if systemctl list-unit-files 2>/dev/null | grep -q "elastic-agent.service"; then
-        echo "  ✓ Elastic Agent service detected"
+    # Check if flag file is missing (would cause enrollment errors)
+    if [ ! -f /opt/elastic_flagfile ]; then
+        echo "  🔧 Missing Elastic Agent flag file - creating preventively"
+        echo "  → This prevents Puppet enrollment errors before they occur"
 
-        # Check if flag file is missing (root cause of enrollment errors)
-        if [ ! -f /opt/elastic_flagfile ]; then
-            echo "  ⚠ Missing Elastic Agent flag file: /opt/elastic_flagfile"
-            echo "  → This likely caused the Puppet enrollment error"
-            echo "  → Creating flag file to fix Puppet manifest..."
-
-            # Create the missing flag file (remove sudo - script should already run as root)
-            touch /opt/elastic_flagfile && chmod 644 /opt/elastic_flagfile
-
-            if [ -f /opt/elastic_flagfile ]; then
-                echo "  ✅ Flag file created successfully: /opt/elastic_flagfile"
-                echo "  → Re-running Puppet agent to complete configuration..."
-
-                # Re-run puppet agent now that flag file exists
-                /opt/puppetlabs/bin/puppet agent --test --waitforcert 60
-                SECOND_EXIT_CODE=$?
-
-                echo "  → Second puppet run completed with exit code: $SECOND_EXIT_CODE"
-                case $SECOND_EXIT_CODE in
-                    0|2|6)
-                        echo "  ✅ Puppet configuration completed successfully after flag fix!"
-                        echo "  🎯 Elastic Agent enrollment issue resolved!"
-                        ;;
-                    *)
-                        echo "  ⚠ Second puppet run still has issues (exit code: $SECOND_EXIT_CODE)"
-                        echo "  → Manual investigation may be needed for remaining issues"
-                        echo "  → But Elastic Agent flag fix was successfully applied"
-                        ;;
-                esac
-            else
-                echo "  ❌ Failed to create flag file - filesystem or permission issue"
-                echo "  → Manual intervention required: sudo touch /opt/elastic_flagfile"
-            fi
+        # Create the flag file preventively
+        if touch /opt/elastic_flagfile && chmod 644 /opt/elastic_flagfile; then
+            echo "  ✅ Elastic flag file created successfully: /opt/elastic_flagfile"
+            echo "  → Puppet should now run without Elastic Agent enrollment errors"
         else
-            echo "  ✓ Elastic Agent flag file already exists: /opt/elastic_flagfile"
-            echo "  → File size: $(stat -c%s /opt/elastic_flagfile 2>/dev/null || echo 'unknown') bytes"
-            echo "  → This appears to be a different Puppet issue (not Elastic Agent related)"
-            echo "  → Check Puppet server logs for details"
+            echo "  ⚠️  Failed to create flag file - may cause Puppet issues"
+            echo "  → Manual intervention: touch /opt/elastic_flagfile"
         fi
     else
-        echo "  ℹ Elastic Agent service not found on this system"
-        echo "  → This appears to be a different Puppet issue (not Elastic Agent related)"
-        echo "  → Common issues: network connectivity, certificate problems, server configuration"
+        echo "  ✓ Elastic Agent flag file already exists: /opt/elastic_flagfile"
+        echo "  → No prevention needed - Puppet should run normally"
     fi
 else
-    echo "✅ Puppet agent run completed with acceptable result (exit code: $PUPPET_EXIT_CODE)"
-    echo "→ No Elastic Agent fixes needed"
+    echo "  ℹ️  Elastic Agent service not found - no prevention needed"
 fi
 
 echo "============================================================"
-echo "Elastic Agent Flag Fix Handler completed"
+echo "Elastic Agent Prevention completed"
 echo "============================================================"
 `
 }
@@ -669,9 +681,9 @@ func (pi *PuppetInstaller) generateDebianScript(certname string, instance *cloud
 	// Generate script components (reusable across Debian/RHEL)
 	factsScript := pi.generateFactsScript(instance)
 	facterBlocklist := pi.generateFacterBlocklistScript()
+	elasticPrevention := pi.generateElasticPreventionScript()
 	puppetConfig := pi.generatePuppetConfigScript(certname)
 	puppetRun := pi.generatePuppetRunScript()
-	elasticFix := pi.generateElasticFlagFixScript()
 
 	return fmt.Sprintf(`#!/bin/bash
 # Note: Removed 'set -e' to allow Puppet exit codes to be handled gracefully
@@ -719,7 +731,7 @@ fi
 %s
 %s
 %s
-`, pi.puppetVersion, pi.puppetVersion, facterBlocklist, factsScript, puppetConfig, puppetRun, elasticFix)
+`, pi.puppetVersion, pi.puppetVersion, facterBlocklist, elasticPrevention, factsScript, puppetConfig, puppetRun)
 }
 
 // generateRHELScript generates installation script for RHEL/CentOS/Amazon Linux.
@@ -729,9 +741,9 @@ func (pi *PuppetInstaller) generateRHELScript(certname string, instance *cloud.I
 	// Generate script components (reusable across Debian/RHEL)
 	factsScript := pi.generateFactsScript(instance)
 	facterBlocklist := pi.generateFacterBlocklistScript()
+	elasticPrevention := pi.generateElasticPreventionScript()
 	puppetConfig := pi.generatePuppetConfigScript(certname)
 	puppetRun := pi.generatePuppetRunScript()
-	elasticFix := pi.generateElasticFlagFixScript()
 
 	return fmt.Sprintf(`#!/bin/bash
 # Note: Removed 'set -e' to allow Puppet exit codes to be handled gracefully
@@ -790,7 +802,7 @@ fi
 %s
 %s
 %s
-`, pi.puppetVersion, pi.puppetVersion, facterBlocklist, factsScript, puppetConfig, puppetRun, elasticFix)
+`, pi.puppetVersion, pi.puppetVersion, facterBlocklist, elasticPrevention, factsScript, puppetConfig, puppetRun)
 }
 
 // VerifyInstallation verifies that Puppet was installed successfully.

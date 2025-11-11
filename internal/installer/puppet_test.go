@@ -899,7 +899,7 @@ func TestGenerateInstallScriptWithAutoDetect_RaceDetector(t *testing.T) {
 // ELASTIC AGENT FIX TESTS
 // ============================================================
 
-// TestGenerateElasticFlagFixScript tests the Elastic Agent flag fix script generation.
+// TestGenerateElasticPreventionScript tests the Elastic Agent prevention script generation.
 //
 // 🎓 CONCEPT: Testing bash script generation
 // When functions generate shell scripts, we need to validate:
@@ -907,27 +907,25 @@ func TestGenerateInstallScriptWithAutoDetect_RaceDetector(t *testing.T) {
 // - Conditional statements are correct
 // - Error messages are informative
 // - Scripts follow bash best practices
-func TestGenerateElasticFlagFixScript(t *testing.T) {
+func TestGenerateElasticPreventionScript(t *testing.T) {
 	installer := NewPuppetInstaller(PuppetOptions{
 		Server: "puppet.example.com",
 		Port:   8140,
 	})
 
 	t.Run("script contains all required components", func(t *testing.T) {
-		script := installer.generateElasticFlagFixScript()
+		script := installer.generateElasticPreventionScript()
 
 		// 🎓 CONCEPT: Component validation
 		// For bash scripts, we validate that key components exist
 		requiredComponents := []string{
-			"Elastic Agent Flag Fix Handler",          // Title/purpose
-			"PUPPET_EXIT_CODE",                        // Exit code handling
-			"systemctl list-unit-files",               // Service detection
-			"elastic-agent.service",                   // Service name
-			"/opt/elastic_flagfile",                   // Flag file path
-			"touch /opt/elastic_flagfile",             // File creation
-			"chmod 644 /opt/elastic_flagfile",         // File permissions
-			"/opt/puppetlabs/bin/puppet agent --test", // Puppet re-run
-			"SECOND_EXIT_CODE",                        // Second run tracking
+			"Elastic Agent Prevention Handler", // Title/purpose (updated)
+			"systemctl list-unit-files",        // Service detection
+			"elastic-agent.service",            // Service name
+			"/opt/elastic_flagfile",            // Flag file path
+			"touch /opt/elastic_flagfile",      // File creation
+			"chmod 644 /opt/elastic_flagfile",  // File permissions
+			"creating preventively",            // Prevention messaging (new)
 		}
 
 		for _, component := range requiredComponents {
@@ -938,16 +936,14 @@ func TestGenerateElasticFlagFixScript(t *testing.T) {
 	})
 
 	t.Run("script has proper conditional logic", func(t *testing.T) {
-		script := installer.generateElasticFlagFixScript()
+		script := installer.generateElasticPreventionScript()
 
 		// 🎓 CONCEPT: Logic validation
 		// Validate that conditional statements follow expected patterns
 		conditionals := []string{
-			"if [ $PUPPET_EXIT_CODE -ne 0 ] && [ $PUPPET_EXIT_CODE -ne 2 ] && [ $PUPPET_EXIT_CODE -ne 6 ]", // Only fix real failures
 			"if systemctl list-unit-files",      // Service check
-			"if [ ! -f /opt/elastic_flagfile ]", // File missing check
-			"if [ -f /opt/elastic_flagfile ]",   // File exists check
-			"case $SECOND_EXIT_CODE in",         // Exit code handling
+			"if [ ! -f /opt/elastic_flagfile ]", // File missing check (prevention)
+			"if touch /opt/elastic_flagfile",    // File creation check (prevention)
 		}
 
 		for _, conditional := range conditionals {
@@ -958,22 +954,18 @@ func TestGenerateElasticFlagFixScript(t *testing.T) {
 	})
 
 	t.Run("script has informative messages", func(t *testing.T) {
-		script := installer.generateElasticFlagFixScript()
+		script := installer.generateElasticPreventionScript()
 
 		// 🎓 CONCEPT: UX validation
 		// Scripts should provide clear feedback to users about what's happening
 		messages := []string{
-			"Analyzing Puppet agent results",
-			"Puppet agent run had failures",
-			"Checking for Elastic Agent enrollment errors",
+			"Checking for Elastic Agent enrollment prevention",
 			"Elastic Agent service detected",
-			"Missing Elastic Agent flag file",
-			"Creating flag file to fix Puppet manifest",
-			"Flag file created successfully",
-			"Re-running Puppet agent to complete configuration",
-			"Puppet configuration completed successfully",
-			"Elastic Agent enrollment issue resolved",
+			"Missing Elastic Agent flag file - creating preventively",
+			"Elastic flag file created successfully",
+			"Elastic Agent Prevention completed",
 			"Elastic Agent service not found",
+			"no prevention needed",
 		}
 
 		for _, message := range messages {
@@ -984,18 +976,15 @@ func TestGenerateElasticFlagFixScript(t *testing.T) {
 	})
 
 	t.Run("script follows bash best practices", func(t *testing.T) {
-		script := installer.generateElasticFlagFixScript()
+		script := installer.generateElasticPreventionScript()
 
 		// 🎓 CONCEPT: Bash best practices validation
 		// Good bash scripts should follow certain patterns for reliability
 		bestPractices := []string{
 			"2>/dev/null", // Error redirection
 			"chmod 644",   // Explicit permissions
-			"case $",      // Case statements for exit codes
-			"0|2|6)",      // Multiple exit code handling
 			"else",        // Proper else branches
 			"fi",          // Proper if closures
-			"esac",        // Proper case closures
 		}
 
 		for _, practice := range bestPractices {
@@ -1006,15 +995,14 @@ func TestGenerateElasticFlagFixScript(t *testing.T) {
 	})
 
 	t.Run("script handles idempotent execution", func(t *testing.T) {
-		script := installer.generateElasticFlagFixScript()
+		script := installer.generateElasticPreventionScript()
 
 		// 🎓 CONCEPT: Idempotency validation
 		// Scripts should handle being run multiple times safely
 		idempotencyChecks := []string{
-			"if [ -f /opt/elastic_flagfile ]",        // Check if file already exists
-			"Elastic Agent flag file already exists", // Message for existing file
-			"acceptable result",                      // Handle success codes
-			"No Elastic Agent fixes needed",          // Skip when not needed
+			"if [ ! -f /opt/elastic_flagfile ]", // Check if file is missing (prevention)
+			"flag file already exists",          // Message for existing file
+			"no prevention needed",              // Skip when not needed
 		}
 
 		for _, check := range idempotencyChecks {
@@ -1025,19 +1013,19 @@ func TestGenerateElasticFlagFixScript(t *testing.T) {
 	})
 }
 
-// TestGenerateElasticFlagFixScript_Integration tests that the elastic fix is properly
+// TestGenerateElasticPreventionScript_Integration tests that the elastic prevention is properly
 // integrated into the main installation scripts.
 //
 // 🎓 CONCEPT: Integration testing
 // Unlike unit tests that test isolated functions, integration tests verify
 // that multiple components work together correctly.
-func TestGenerateElasticFlagFixScript_Integration(t *testing.T) {
+func TestGenerateElasticPreventionScript_Integration(t *testing.T) {
 	installer := NewPuppetInstaller(PuppetOptions{
 		Server: "puppet.example.com",
 		Port:   8140,
 	})
 
-	t.Run("debian script includes elastic fix", func(t *testing.T) {
+	t.Run("debian script includes elastic prevention", func(t *testing.T) {
 		// Generate Debian installation script
 		scripts, err := installer.GenerateInstallScript("debian", map[string]string{})
 		if err != nil {
@@ -1051,23 +1039,22 @@ func TestGenerateElasticFlagFixScript_Integration(t *testing.T) {
 		script := scripts[0]
 
 		// 🎓 CONCEPT: Integration verification
-		// Verify that the elastic fix is included in the main script
-		elasticFixMarkers := []string{
-			"Elastic Agent Flag Fix Handler",
-			"Analyzing Puppet agent results",
-			"PUPPET_EXIT_CODE",
+		// Verify that the elastic prevention is included in the main script
+		elasticPreventionMarkers := []string{
+			"Elastic Agent Prevention Handler",
+			"Checking for Elastic Agent enrollment prevention",
 			"elastic-agent.service",
 			"/opt/elastic_flagfile",
 		}
 
-		for _, marker := range elasticFixMarkers {
+		for _, marker := range elasticPreventionMarkers {
 			if !strings.Contains(script, marker) {
-				t.Errorf("Debian script missing elastic fix marker: %q", marker)
+				t.Errorf("Debian script missing elastic prevention marker: %q", marker)
 			}
 		}
 	})
 
-	t.Run("rhel script includes elastic fix", func(t *testing.T) {
+	t.Run("rhel script includes elastic prevention", func(t *testing.T) {
 		// Generate RHEL installation script
 		scripts, err := installer.GenerateInstallScript("rhel", map[string]string{})
 		if err != nil {
@@ -1080,18 +1067,17 @@ func TestGenerateElasticFlagFixScript_Integration(t *testing.T) {
 
 		script := scripts[0]
 
-		// Verify that the elastic fix is included
-		elasticFixMarkers := []string{
-			"Elastic Agent Flag Fix Handler",
-			"Analyzing Puppet agent results",
-			"PUPPET_EXIT_CODE",
+		// Verify that the elastic prevention is included
+		elasticPreventionMarkers := []string{
+			"Elastic Agent Prevention Handler",
+			"Checking for Elastic Agent enrollment prevention",
 			"elastic-agent.service",
 			"/opt/elastic_flagfile",
 		}
 
-		for _, marker := range elasticFixMarkers {
+		for _, marker := range elasticPreventionMarkers {
 			if !strings.Contains(script, marker) {
-				t.Errorf("RHEL script missing elastic fix marker: %q", marker)
+				t.Errorf("RHEL script missing elastic prevention marker: %q", marker)
 			}
 		}
 	})
@@ -1112,33 +1098,33 @@ func TestGenerateElasticFlagFixScript_Integration(t *testing.T) {
 		debianScript := debianScripts[0]
 		rhelScript := rhelScripts[0]
 
-		// Extract the elastic fix section from both scripts
-		debianFixStart := strings.Index(debianScript, "Elastic Agent Flag Fix Handler")
-		rhelFixStart := strings.Index(rhelScript, "Elastic Agent Flag Fix Handler")
+		// Extract the elastic prevention section from both scripts
+		debianPreventionStart := strings.Index(debianScript, "Elastic Agent Prevention Handler")
+		rhelPreventionStart := strings.Index(rhelScript, "Elastic Agent Prevention Handler")
 
-		if debianFixStart == -1 {
-			t.Fatal("Debian script missing elastic fix section")
+		if debianPreventionStart == -1 {
+			t.Fatal("Debian script missing elastic prevention section")
 		}
-		if rhelFixStart == -1 {
-			t.Fatal("RHEL script missing elastic fix section")
+		if rhelPreventionStart == -1 {
+			t.Fatal("RHEL script missing elastic prevention section")
 		}
 
-		debianFixEnd := strings.Index(debianScript[debianFixStart:], "============================================================")
-		rhelFixEnd := strings.Index(rhelScript[rhelFixStart:], "============================================================")
+		debianPreventionEnd := strings.Index(debianScript[debianPreventionStart:], "============================================================")
+		rhelPreventionEnd := strings.Index(rhelScript[rhelPreventionStart:], "============================================================")
 
 		// Add offset to get absolute position
-		debianFixEnd += debianFixStart
-		rhelFixEnd += rhelFixStart
+		debianPreventionEnd += debianPreventionStart
+		rhelPreventionEnd += rhelPreventionStart
 
-		debianFixSection := debianScript[debianFixStart:debianFixEnd]
-		rhelFixSection := rhelScript[rhelFixStart:rhelFixEnd]
+		debianPreventionSection := debianScript[debianPreventionStart:debianPreventionEnd]
+		rhelPreventionSection := rhelScript[rhelPreventionStart:rhelPreventionEnd]
 
 		// 🎓 CONCEPT: Exact match verification
-		// The elastic fix logic should be identical in both scripts (DRY principle)
-		if debianFixSection != rhelFixSection {
-			t.Error("Elastic fix sections differ between Debian and RHEL scripts - DRY principle violated")
-			t.Logf("Debian fix section length: %d", len(debianFixSection))
-			t.Logf("RHEL fix section length: %d", len(rhelFixSection))
+		// The elastic prevention logic should be identical in both scripts (DRY principle)
+		if debianPreventionSection != rhelPreventionSection {
+			t.Error("Elastic prevention sections differ between Debian and RHEL scripts - DRY principle violated")
+			t.Logf("Debian prevention section length: %d", len(debianPreventionSection))
+			t.Logf("RHEL prevention section length: %d", len(rhelPreventionSection))
 		}
 	})
 }
