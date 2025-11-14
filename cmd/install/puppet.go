@@ -117,7 +117,38 @@ Custom Facter Facts:
         compliance_level: "compliance"
         data_classification: "classification"
 
-Exemplos:
+Modos de Instalação:
+
+  1. INSTALAÇÃO LOCAL (sem CSV):
+     Executa instalação diretamente na máquina atual sem necessidade de CSV ou SSM.
+     Útil para: máquinas sem SSM Agent, ambientes on-premises, bootstrap via curl/wget.
+
+     Detecção automática:
+       - Detecta OS local (/etc/os-release)
+       - Valida conectividade com Puppet Server
+       - Gera e executa script de instalação localmente
+
+     Exemplos instalação local:
+       # Instalação local básica
+       opsmaster install puppet --puppet-server puppet.example.com
+
+       # Com dry-run para preview do script
+       opsmaster install puppet --puppet-server puppet.example.com --dry-run
+
+       # Com environment customizado
+       opsmaster install puppet \
+         --puppet-server puppet.example.com \
+         --environment staging
+
+       # Bootstrap one-liner
+       curl -L https://releases.opsmaster.io/opsmaster | \
+         bash -s install puppet --puppet-server puppet.example.com
+
+  2. INSTALAÇÃO REMOTA (com CSV):
+     Usa CSV com lista de instâncias para instalação via SSM (comportamento original).
+     Suporta instalação em múltiplas instâncias em paralelo.
+
+Exemplos instalação remota:
   # Instalação básica (cria location.yaml automaticamente)
   opsmaster install puppet \
     --instances-file instances.csv \
@@ -163,9 +194,9 @@ func init() {
 	InstallCmd.AddCommand(puppetCmd)
 
 	// Required flags
-	puppetCmd.Flags().StringVar(&instancesFile, "instances-file", "", "Arquivo CSV com lista de instâncias (obrigatório)")
+	puppetCmd.Flags().StringVar(&instancesFile, "instances-file", "", "Arquivo CSV com lista de instâncias (opcional - se omitido, instala localmente)")
 	puppetCmd.Flags().StringVar(&puppetServer, "puppet-server", "", "Hostname do Puppet Server (obrigatório)")
-	puppetCmd.MarkFlagRequired("instances-file")
+	// Only puppet-server is required - instances-file is optional (enables local installation mode)
 	puppetCmd.MarkFlagRequired("puppet-server")
 
 	// Optional flags with defaults
@@ -276,7 +307,45 @@ func runPuppetInstall(cmd *cobra.Command, args []string) error {
 	log := logger.Get()
 
 	startTime := time.Now()
-	log.Info("🚀 Puppet Installation Started",
+
+	// ============================================================
+	// DETECT INSTALLATION MODE: LOCAL vs REMOTE
+	// ============================================================
+	// If --instances-file is not provided, run in LOCAL mode
+	// (install Puppet on the current machine where opsmaster is running)
+	if instancesFile == "" {
+		log.Info("🚀 Puppet Local Installation Started (no CSV file provided)")
+		log.Info("   Puppet Server", "server", puppetServer, "port", puppetPort)
+		log.Info("   Environment", "environment", environment)
+		if dryRun {
+			log.Info("   Mode", "dry_run", true)
+		}
+
+		// Create Puppet installer for local installation
+		puppetInstaller := installer.NewPuppetInstaller(installer.PuppetOptions{
+			Server:      puppetServer,
+			Port:        puppetPort,
+			Version:     puppetVersion,
+			Environment: environment,
+		})
+
+		// Execute local installation
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		if err := puppetInstaller.InstallLocal(ctx, dryRun); err != nil {
+			log.Error("❌ Local installation failed", "error", err, "duration", time.Since(startTime))
+			return fmt.Errorf("local installation failed: %w", err)
+		}
+
+		log.Info("🎉 Local installation completed successfully!", "duration", time.Since(startTime))
+		return nil
+	}
+
+	// ============================================================
+	// REMOTE INSTALLATION MODE (CSV provided)
+	// ============================================================
+	log.Info("🚀 Puppet Remote Installation Started",
 		"instances_file", instancesFile,
 		"puppet_server", puppetServer,
 		"max_concurrency", maxConcurrency,

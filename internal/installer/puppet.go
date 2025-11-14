@@ -3,12 +3,16 @@ package installer
 import (
 	"context"
 	"fmt"
+	"net"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/estudosdevops/opsmaster/internal/cloud"
+	"github.com/estudosdevops/opsmaster/internal/logger"
 	"github.com/estudosdevops/opsmaster/internal/retry"
 	"github.com/estudosdevops/opsmaster/internal/validator"
 )
@@ -187,6 +191,85 @@ func (pi *PuppetInstaller) InstallWithRetry(ctx context.Context, instance *cloud
 
 		return nil
 	})
+}
+
+// InstallLocal executes Puppet installation on the local machine (where opsmaster is running).
+// This method is used when opsmaster is executed directly on the target machine without SSM/SSH.
+//
+// Use cases:
+//   - Machines without SSM Agent installed
+//   - On-premises VMs without remote access
+//   - Bootstrap scenarios using curl + opsmaster binary
+//   - Environments where CSV/remote installation is not needed
+//
+// The installation will:
+//  1. Detect local OS by reading /etc/os-release
+//  2. Validate connectivity to Puppet Server
+//  3. Generate appropriate installation script (Debian or RHEL)
+//  4. Execute script locally with bash (or simulate if dryRun=true)
+//
+// Parameters:
+//   - ctx: Context for cancellation/timeout
+//   - dryRun: If true, simulates installation without executing (shows script only)
+//
+// Returns error if installation fails, nil if successful.
+func (pi *PuppetInstaller) InstallLocal(ctx context.Context, dryRun bool) error {
+	log := logger.Get()
+
+	// Step 1: Detect OS locally (reusing normalizeOS)
+	log.Info("Detecting local operating system...")
+	osID, err := readLocalOSRelease()
+	if err != nil {
+		return fmt.Errorf("OS detection failed: %w", err)
+	}
+
+	osType, err := normalizeOS(osID)
+	if err != nil {
+		return err
+	}
+	log.Info("Operating system detected", "os", osType)
+
+	// Step 2: Validate connectivity to Puppet Server
+	log.Info("Validating connectivity to Puppet Server...", "server", pi.puppetServer, "port", pi.puppetPort)
+	if err := validateLocalConnectivity(ctx, pi.puppetServer, pi.puppetPort); err != nil {
+		return fmt.Errorf("puppet server connectivity validation failed: %w", err)
+	}
+	log.Info("✓ Puppet Server is reachable")
+
+	// Step 3: Generate unique certname for this machine
+	certname := generatePuppetCertname()
+	log.Info("Generated Puppet certname", "certname", certname)
+
+	// Step 4: Generate installation script (reusing existing functions)
+	var script string
+	switch osType {
+	case OSTypeDebian:
+		// Reutiliza função existente, passa nil para instance (local não precisa cloud context)
+		script = pi.generateDebianScript(certname, nil)
+	case OSTypeRHEL:
+		// Reutiliza função existente, passa nil para instance (local não precisa cloud context)
+		script = pi.generateRHELScript(certname, nil)
+	default:
+		return fmt.Errorf("unsupported OS: %s", osType)
+	}
+
+	// Step 5: Execute script locally (or simulate if dry-run)
+	if dryRun {
+		log.Info("🔍 DRY RUN MODE - Installation script preview:")
+		log.Info("============================================================")
+		fmt.Println(script)
+		log.Info("============================================================")
+		log.Info("✅ Dry run completed - no changes were made")
+		return nil
+	}
+
+	log.Info("Installing Puppet agent locally...")
+	if err := executeLocalScript(ctx, script); err != nil {
+		return fmt.Errorf("installation failed: %w", err)
+	}
+
+	log.Info("🎉 Puppet agent installed successfully!", "certname", certname, "server", pi.puppetServer, "environment", pi.environment)
+	return nil
 }
 
 // GenerateInstallScriptWithAutoDetect generates installation script with automatic OS detection.
@@ -451,28 +534,42 @@ func (pi *PuppetInstaller) generateFactsScript(instance *cloud.Instance) string 
 	return script.String()
 }
 
-// generateFacterBlocklistScript generates shell script to configure Facter blocklist.
+// generateFacterBlocklistScript generates cloud-specific Facter blocklist configuration.
 // This prevents "exceeds the value length limit: 4096" errors caused by oversized facts
-// like ec2_userdata in cloud environments.
+// in cloud environments.
 //
-// Creates /etc/puppetlabs/facter/facter.conf with blocklist configuration.
+// AWS: Blocks ec2_userdata and ec2_metadata (can exceed 4KB causing Puppet errors)
+// Azure/GCP/On-premises: No blocklist needed (no EC2-specific facts exist)
+//
+// Creates /etc/puppetlabs/facter/facter.conf only for AWS instances.
 // The directory is created if it doesn't exist (mkdir -p).
 //
-// Blocklisted facts:
-//   - ec2_userdata: EC2 user data can exceed 4KB (often contains cloud-init scripts)
-//   - ec2_metadata: EC2 metadata can be large in some AWS configurations
+// Parameters:
+//   - instance: Instance with Cloud field to determine cloud type
 //
-// Returns bash script ready to be inserted into installation script.
-func (*PuppetInstaller) generateFacterBlocklistScript() string {
-	return `# Configure Facter blocklist to prevent oversized facts errors
-echo "Configuring Facter blocklist..."
+// Returns bash script for AWS, empty string for other clouds.
+func (*PuppetInstaller) generateFacterBlocklistScript(instance *cloud.Instance) string {
+	// Determine cloud type from instance
+	cloudType := ""
+	if instance != nil {
+		cloudType = strings.ToLower(strings.TrimSpace(instance.Cloud))
+	}
+
+	// Only apply EC2 blocklist for AWS instances
+	if cloudType != "aws" {
+		return "" // No blocklist needed for non-AWS clouds
+	}
+
+	// AWS-specific blocklist configuration
+	return `# Configure Facter blocklist for AWS (prevent ec2_userdata oversize errors)
+echo "Configuring Facter blocklist for AWS..."
 mkdir -p /etc/puppetlabs/facter
 cat > /etc/puppetlabs/facter/facter.conf <<EOF
 facts : {
   blocklist : [ "ec2_userdata" ]
 }
 EOF
-echo "  ✓ Facter blocklist configured"
+echo "  ✓ Facter blocklist configured for AWS"
 `
 }
 
@@ -643,13 +740,13 @@ func (pi *PuppetInstaller) ValidatePrerequisites(ctx context.Context, instance *
 // 6. Run initial puppet agent
 //
 // Note: For automatic OS detection, use GenerateInstallScriptWithAutoDetect instead.
-func (pi *PuppetInstaller) GenerateInstallScript(os string, _ map[string]string) ([]string, error) {
+func (pi *PuppetInstaller) GenerateInstallScript(osType string, _ map[string]string) ([]string, error) {
 	// Generate new certname for manual script generation
 	// Note: GenerateInstallScriptWithAutoDetect handles certname preservation automatically
 	certname := generatePuppetCertname()
 
 	// Normalize OS type using centralized function
-	normalizedOS, err := normalizeOS(os)
+	normalizedOS, err := normalizeOS(osType)
 	if err != nil {
 		// For backward compatibility, default to debian on unknown OS
 		// This maintains the previous behavior where unknown OS would fall through
@@ -680,7 +777,7 @@ func (pi *PuppetInstaller) GenerateInstallScript(os string, _ map[string]string)
 func (pi *PuppetInstaller) generateDebianScript(certname string, instance *cloud.Instance) string {
 	// Generate script components (reusable across Debian/RHEL)
 	factsScript := pi.generateFactsScript(instance)
-	facterBlocklist := pi.generateFacterBlocklistScript()
+	facterBlocklist := pi.generateFacterBlocklistScript(instance) // Pass instance for cloud-aware blocklist
 	elasticPrevention := pi.generateElasticPreventionScript()
 	puppetConfig := pi.generatePuppetConfigScript(certname)
 	puppetRun := pi.generatePuppetRunScript()
@@ -740,7 +837,7 @@ fi
 func (pi *PuppetInstaller) generateRHELScript(certname string, instance *cloud.Instance) string {
 	// Generate script components (reusable across Debian/RHEL)
 	factsScript := pi.generateFactsScript(instance)
-	facterBlocklist := pi.generateFacterBlocklistScript()
+	facterBlocklist := pi.generateFacterBlocklistScript(instance) // Pass instance for cloud-aware blocklist
 	elasticPrevention := pi.generateElasticPreventionScript()
 	puppetConfig := pi.generatePuppetConfigScript(certname)
 	puppetRun := pi.generatePuppetRunScript()
@@ -873,6 +970,102 @@ func (pi *PuppetInstaller) GetInstallMetadata() map[string]string {
 		return map[string]string{}
 	}
 	return pi.lastMetadata
+}
+
+// readLocalOSRelease reads /etc/os-release file locally and extracts the OS ID.
+// This function is used for local installations (without remote command execution).
+//
+// Returns OS ID (e.g., "ubuntu", "amzn", "rhel") which can be passed to normalizeOS().
+func readLocalOSRelease() (string, error) {
+	// Read /etc/os-release file
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return "", fmt.Errorf("failed to read /etc/os-release: %w", err)
+	}
+
+	// Extract ID= line (same logic as remote detectOS)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "ID=") {
+			// Remove ID= prefix and quotes
+			osID := strings.TrimPrefix(line, "ID=")
+			osID = strings.Trim(osID, `"'`)
+			return osID, nil
+		}
+	}
+
+	return "", fmt.Errorf("ID not found in /etc/os-release")
+}
+
+// validateLocalConnectivity validates network connectivity to Puppet Server from local machine.
+// This function tests TCP connection to ensure the machine can reach the Puppet Server.
+//
+// Parameters:
+//   - ctx: Context for timeout control
+//   - host: Puppet Server hostname
+//   - port: Puppet Server port (typically 8140)
+//
+// Returns error if connection fails, nil if successful.
+func validateLocalConnectivity(ctx context.Context, host string, port int) error {
+	// Use net.DialTimeout for TCP connection test
+	address := fmt.Sprintf("%s:%d", host, port)
+
+	// Create dialer with context
+	dialer := &net.Dialer{
+		Timeout: 10 * time.Second,
+	}
+
+	// Attempt TCP connection
+	conn, err := dialer.DialContext(ctx, "tcp", address)
+	if err != nil {
+		return fmt.Errorf("cannot connect to %s: %w", address, err)
+	}
+	defer conn.Close()
+
+	return nil
+}
+
+// executeLocalScript executes a bash script locally on the current machine.
+// This function is used for local Puppet installation (without SSM/SSH).
+//
+// The script is written to a temporary file and executed with bash.
+// Output (stdout/stderr) is redirected to console for visibility.
+//
+// Parameters:
+//   - ctx: Context for cancellation/timeout
+//   - script: Bash script content to execute
+//
+// Returns error if script execution fails, nil if successful.
+func executeLocalScript(ctx context.Context, script string) error {
+	// Create temporary file for script
+	tmpFile, err := os.CreateTemp("", "opsmaster-puppet-*.sh")
+	if err != nil {
+		return fmt.Errorf("failed to create temp script: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	// Write script content
+	if _, err := tmpFile.WriteString(script); err != nil {
+		return fmt.Errorf("failed to write script: %w", err)
+	}
+
+	// Close file before execution
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp script: %w", err)
+	}
+
+	// Execute script with bash
+	// Note: May require sudo depending on the installation steps
+	// #nosec G204 - tmpFile.Name() is from os.CreateTemp, controlled by us, not user input
+	cmd := exec.CommandContext(ctx, "bash", tmpFile.Name())
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("script execution failed: %w", err)
+	}
+
+	return nil
 }
 
 // generatePuppetCertname generates unique certname for Puppet agent.
