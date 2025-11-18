@@ -1,9 +1,18 @@
 package provider
 
 import (
+	"os"
 	"testing"
 
 	"github.com/estudosdevops/opsmaster/internal/cloud"
+)
+
+// Test constants
+const (
+	testProfileProduction = "production"
+	testProfileStaging    = "staging"
+	testRegionUSWest2     = "us-west-2"
+	testRegionSAEast1     = "sa-east-1"
 )
 
 // ============================================================
@@ -103,10 +112,70 @@ func TestNewProvider(t *testing.T) {
 	}
 }
 
-// TestNewProvider_WithOptions tests functional options pattern
-func TestNewProvider_WithOptions(t *testing.T) {
+// TestNewProvider_WithOptions_Unit tests functional options pattern (unit test - no AWS credentials needed)
+func TestNewProvider_WithOptions_Unit(t *testing.T) {
+	t.Run("WithProfile option sets config correctly", func(t *testing.T) {
+		config := &Config{}
+		opt := WithProfile(testProfileProduction)
+		opt(config)
+
+		if config.Profile != testProfileProduction {
+			t.Errorf("Config.Profile = %q, want %q", config.Profile, testProfileProduction)
+		}
+	})
+
+	t.Run("WithRegion option sets config correctly", func(t *testing.T) {
+		config := &Config{}
+		opt := WithRegion(testRegionUSWest2)
+		opt(config)
+
+		if config.Region != testRegionUSWest2 {
+			t.Errorf("Config.Region = %q, want %q", config.Region, testRegionUSWest2)
+		}
+	})
+
+	t.Run("multiple options set config correctly", func(t *testing.T) {
+		config := &Config{}
+		options := []Option{
+			WithProfile(testProfileStaging),
+			WithRegion(testRegionSAEast1),
+		}
+
+		for _, opt := range options {
+			opt(config)
+		}
+
+		if config.Profile != testProfileStaging {
+			t.Errorf("Config.Profile = %q, want %q", config.Profile, testProfileStaging)
+		}
+		if config.Region != testRegionSAEast1 {
+			t.Errorf("Config.Region = %q, want %q", config.Region, testRegionSAEast1)
+		}
+	})
+
+	t.Run("options don't affect error cases", func(t *testing.T) {
+		_, err := NewProvider("unsupported", WithProfile("test"))
+		if err == nil {
+			t.Error("NewProvider() with invalid type should return error even with valid options")
+		}
+	})
+}
+
+// TestNewProvider_WithOptions_Integration tests functional options with real AWS provider creation
+// This requires AWS credentials and is skipped in CI/CD environment
+func TestNewProvider_WithOptions_Integration(t *testing.T) {
+	// Skip integration tests in CI (no AWS credentials configured)
+	if os.Getenv("CI") == "true" {
+		t.Skip("Skipping AWS profile integration tests in CI environment - requires real AWS credentials")
+	}
+
+	// Skip in short mode (go test -short)
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
 	t.Run("with profile option", func(t *testing.T) {
-		provider, err := NewProvider("aws", WithProfile("production"))
+		provider, err := NewProvider("aws", WithProfile(testProfileProduction))
 		if err != nil {
 			t.Fatalf("NewProvider() with profile returned error: %v", err)
 		}
@@ -137,13 +206,6 @@ func TestNewProvider_WithOptions(t *testing.T) {
 		}
 		if provider == nil {
 			t.Fatal("NewProvider() returned nil provider")
-		}
-	})
-
-	t.Run("options don't affect error cases", func(t *testing.T) {
-		_, err := NewProvider("unsupported", WithProfile("test"))
-		if err == nil {
-			t.Error("NewProvider() with invalid type should return error even with valid options")
 		}
 	})
 }
@@ -323,14 +385,49 @@ func TestNewProviderFromInstances(t *testing.T) {
 		}
 	})
 
-	t.Run("with functional options", func(t *testing.T) {
+	t.Run("with functional options - unit test", func(t *testing.T) {
+		// Unit test: apenas valida que options são passadas corretamente
+		// Não cria provider AWS real (não precisa de credenciais)
+		config := &Config{}
+		opts := []Option{
+			WithProfile(testProfileProduction),
+			WithRegion(testRegionUSWest2),
+		}
+
+		for _, opt := range opts {
+			opt(config)
+		}
+
+		if config.Profile != testProfileProduction {
+			t.Errorf("Expected profile '%s', got '%s'", testProfileProduction, config.Profile)
+		}
+		if config.Region != testRegionUSWest2 {
+			t.Errorf("Expected region '%s', got '%s'", testRegionUSWest2, config.Region)
+		}
+	})
+}
+
+// TestNewProviderFromInstances_Integration tests with real AWS provider creation
+// This requires AWS credentials and is skipped in CI/CD environment
+func TestNewProviderFromInstances_Integration(t *testing.T) {
+	// Skip integration tests in CI (no AWS credentials configured)
+	if os.Getenv("CI") == "true" {
+		t.Skip("Skipping AWS integration tests in CI environment - requires real AWS credentials")
+	}
+
+	// Skip in short mode (go test -short)
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	t.Run("with functional options - integration", func(t *testing.T) {
 		instances := []*cloud.Instance{
 			{ID: "i-123", Cloud: "aws", Account: "111111111111", Region: "us-east-1"},
 		}
 
 		provider, err := NewProviderFromInstances(instances,
-			WithProfile("production"),
-			WithRegion("us-east-1"),
+			WithProfile(testProfileProduction),
+			WithRegion(testRegionUSWest2),
 		)
 		if err != nil {
 			t.Fatalf("NewProviderFromInstances() with options returned error: %v", err)
@@ -533,40 +630,40 @@ func TestProviderType_Constants(t *testing.T) {
 func TestConfig_FunctionalOptions(t *testing.T) {
 	t.Run("WithProfile option", func(t *testing.T) {
 		config := &Config{}
-		opt := WithProfile("production")
+		opt := WithProfile(testProfileProduction)
 		opt(config)
 
-		if config.Profile != "production" {
-			t.Errorf("Config.Profile = %q, want %q", config.Profile, "production")
+		if config.Profile != testProfileProduction {
+			t.Errorf("Config.Profile = %q, want %q", config.Profile, testProfileProduction)
 		}
 	})
 
 	t.Run("WithRegion option", func(t *testing.T) {
 		config := &Config{}
-		opt := WithRegion("us-west-2")
+		opt := WithRegion(testRegionUSWest2)
 		opt(config)
 
-		if config.Region != "us-west-2" {
-			t.Errorf("Config.Region = %q, want %q", config.Region, "us-west-2")
+		if config.Region != testRegionUSWest2 {
+			t.Errorf("Config.Region = %q, want %q", config.Region, testRegionUSWest2)
 		}
 	})
 
 	t.Run("multiple options", func(t *testing.T) {
 		config := &Config{}
 		options := []Option{
-			WithProfile("staging"),
-			WithRegion("sa-east-1"),
+			WithProfile(testProfileStaging),
+			WithRegion(testRegionSAEast1),
 		}
 
 		for _, opt := range options {
 			opt(config)
 		}
 
-		if config.Profile != "staging" {
-			t.Errorf("Config.Profile = %q, want %q", config.Profile, "staging")
+		if config.Profile != testProfileStaging {
+			t.Errorf("Config.Profile = %q, want %q", config.Profile, testProfileStaging)
 		}
-		if config.Region != "sa-east-1" {
-			t.Errorf("Config.Region = %q, want %q", config.Region, "sa-east-1")
+		if config.Region != testRegionSAEast1 {
+			t.Errorf("Config.Region = %q, want %q", config.Region, testRegionSAEast1)
 		}
 	})
 
