@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"os"
 	"testing"
 
 	"github.com/estudosdevops/opsmaster/internal/cloud"
@@ -105,6 +106,11 @@ func TestNewProvider(t *testing.T) {
 
 // TestNewProvider_WithOptions tests functional options pattern
 func TestNewProvider_WithOptions(t *testing.T) {
+	// Skip testes de integração AWS no CI (não há credenciais configuradas)
+	if os.Getenv("CI") == "true" {
+		t.Skip("Skipping AWS profile integration tests in CI environment - requires real AWS credentials")
+	}
+
 	t.Run("with profile option", func(t *testing.T) {
 		provider, err := NewProvider("aws", WithProfile("production"))
 		if err != nil {
